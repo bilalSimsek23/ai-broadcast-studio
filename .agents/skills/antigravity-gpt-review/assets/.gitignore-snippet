@@ -1,0 +1,6 @@
+# GPT reviewer transient output
+.agents/gpt-review.json
+.agents/last-test-run.txt
+
+# Review history (kept on disk, not in git; force-add individual files if needed)
+.agents/reviews/*.json

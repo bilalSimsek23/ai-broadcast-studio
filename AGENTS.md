@@ -1,47 +1,21 @@
-<laravel-boost-guidelines>
-# Laravel Application
+# AGENTS.md
 
-This repository contains a Laravel application. Complete the following setup before working on the user's request.
+This repository uses a two-agent development loop.
 
-## Prerequisites
+- **Implementation agent (CLAUDE):** read [`CLAUDE.md`](CLAUDE.md) in full before
+  any work. It is the coding contract (architecture, Laravel rules, testing,
+  AI provider abstraction, security, review workflow).
+- **Review agent (GPT):** an independent reviewer invoked via
+  `node .agents/scripts/gpt-review.mjs`. It returns a machine-readable verdict:
+  `APPROVED`, `APPROVED_WITH_NOTES`, or `CHANGES_REQUIRED`.
 
-Verify that PHP and Composer are available:
+Task-specific context lives in [`.agents/`](.agents/):
 
-```sh
-php -v
-composer -V
-```
+- `.agents/project-context.md` — what the product is and current constraints.
+- `.agents/architecture.md` — target structure and technical decisions.
+- `.agents/current-task.md` — the single active task.
+- `.agents/reviews/` — archived review results.
 
-If either command is unavailable, detect the user's operating system and install the prerequisites with the appropriate command:
-
-macOS:
-
-```sh
-/bin/bash -c "$(curl -fsSL https://php.new/install/mac/8.5)"
-```
-
-Windows PowerShell:
-
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://php.new/install/windows/8.5'))
-```
-
-Linux:
-
-```sh
-/bin/bash -c "$(curl -fsSL https://php.new/install/linux/8.5)"
-```
-
-After installation, ask the user to restart their terminal. If the agent needs the restarted shell to continue, ask the user to reopen their terminal and rerun their original prompt.
-
-## Agent Setup
-
-Install Laravel Boost from the application root before making application changes:
-
-```sh
-composer require laravel/boost --dev
-php artisan boost:install
-```
-
-Boost replaces these bootstrap instructions with guidelines tailored to the application. After installation, read `AGENTS.md` again and continue with the user's original request using the generated guidelines.
-</laravel-boost-guidelines>
+A task is complete when the latest GPT review verdict is `APPROVED` **or**
+`APPROVED_WITH_NOTES` (the latter just means non-blocking notes remain — it
+still completes the task; see `CLAUDE.md` §7 "Review governance").

@@ -38,6 +38,15 @@ enum EpisodeStatus: string
         return $this === self::Live;
     }
 
+    /**
+     * States from which an episode may be moved to "Ready" (via the readiness
+     * check). Live/Completed/Archived episodes must not be regressed to Ready.
+     */
+    public function isPreparable(): bool
+    {
+        return $this === self::Draft || $this === self::Preparing;
+    }
+
     /** The episode has aired and is now historical. */
     public function isConcluded(): bool
     {

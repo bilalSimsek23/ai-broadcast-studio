@@ -39,12 +39,19 @@ class EpisodeFactory extends Factory
         return $this->state(['show_id' => $show->id]);
     }
 
+    /**
+     * A fixture already in the guarded "Ready" status. `Ready` cannot be set
+     * through a normal model write (only the MakeEpisodeReady service may),
+     * so this fixture reaches it with an event-free write after creation.
+     */
     public function scheduled(): static
     {
-        return $this->state([
-            'status' => EpisodeStatus::Ready,
-            'broadcast_at' => fake()->dateTimeBetween('+1 day', '+2 weeks'),
-        ]);
+        return $this
+            ->state(['broadcast_at' => fake()->dateTimeBetween('+1 day', '+2 weeks')])
+            ->afterCreating(function (Episode $episode): void {
+                $episode->status = EpisodeStatus::Ready;
+                $episode->saveQuietly();
+            });
     }
 
     public function live(): static

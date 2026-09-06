@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Enums\EpisodeStatus;
+use App\Exceptions\InvalidEpisodeTransition;
 use App\Models\Concerns\HasUuid;
 use Database\Factories\EpisodeFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -18,6 +19,14 @@ use Illuminate\Support\Carbon;
 /**
  * One broadcast instalment of a Show.
  *
+ * Editorial preparation lives on THIS model and is four distinct concerns
+ * (see .agents/architecture.md):
+ *  - `ai_*` fields         -> the episode's AI briefing (this episode only)
+ *  - `presenter`/notes     -> the human host's brief (opening/key/push/closing)
+ *  - EpisodeTopic.ai_context      -> per-topic AI context
+ *  - EpisodeAiPersona.episode_instructions -> per-persona, per-episode notes
+ * None of these belong on the persistent AiPersona identity.
+ *
  * @property int $id
  * @property string $uuid
  * @property int $show_id
@@ -28,6 +37,15 @@ use Illuminate\Support\Carbon;
  * @property string|null $purpose
  * @property string|null $preparation_notes
  * @property string|null $broadcast_instructions
+ * @property string|null $opening_notes
+ * @property string|null $key_points
+ * @property string|null $questions_to_push
+ * @property string|null $closing_notes
+ * @property string|null $ai_objective
+ * @property string|null $ai_tone_override
+ * @property string|null $must_cover_points
+ * @property string|null $avoid_points
+ * @property string|null $response_length_guidance
  * @property EpisodeStatus $status
  */
 #[Fillable([
@@ -39,6 +57,15 @@ use Illuminate\Support\Carbon;
     'purpose',
     'preparation_notes',
     'broadcast_instructions',
+    'opening_notes',
+    'key_points',
+    'questions_to_push',
+    'closing_notes',
+    'ai_objective',
+    'ai_tone_override',
+    'must_cover_points',
+    'avoid_points',
+    'response_length_guidance',
     'status',
 ])]
 class Episode extends Model
@@ -51,6 +78,30 @@ class Episode extends Model
     protected $attributes = [
         'status' => EpisodeStatus::Draft->value,
     ];
+
+    protected static function booted(): void
+    {
+        // Readiness invariant: "Ready" is a GUARDED status. The ONLY writer
+        // allowed to set it is the MakeEpisodeReady application service, which
+        // does so with a query-builder UPDATE inside a row-locked transaction,
+        // AFTER its lifecycle + readiness checks. A builder UPDATE fires no
+        // model events, so it is not seen here. Every EVENT-driven attempt to
+        // persist status = Ready - a model save/update, or create() - is
+        // refused, whatever the caller (Filament form, tinker, a future API,
+        // application code). Fixtures that need a Ready row bypass events
+        // explicitly (see EpisodeFactory::scheduled()).
+        static::creating(static function (self $episode): void {
+            if ($episode->status === EpisodeStatus::Ready) {
+                throw InvalidEpisodeTransition::unauthorizedReadyWrite();
+            }
+        });
+
+        static::updating(static function (self $episode): void {
+            if ($episode->isDirty('status') && $episode->status === EpisodeStatus::Ready) {
+                throw InvalidEpisodeTransition::unauthorizedReadyWrite();
+            }
+        });
+    }
 
     /**
      * @return array<string, string>
@@ -82,6 +133,18 @@ class Episode extends Model
             ->withPivot(['sort_order', 'episode_instructions'])
             ->withTimestamps()
             ->orderByPivot('sort_order');
+    }
+
+    /**
+     * The episode line-up as first-class rows (persona slot + per-episode
+     * ordering and instructions). Same underlying table as {@see aiPersonas()};
+     * this hasMany is the ergonomic handle for managing the slots directly.
+     *
+     * @return HasMany<EpisodeAiPersona, $this>
+     */
+    public function lineup(): HasMany
+    {
+        return $this->hasMany(EpisodeAiPersona::class)->orderBy('sort_order');
     }
 
     /**

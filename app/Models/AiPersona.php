@@ -123,7 +123,7 @@ class AiPersona extends Model
     }
 
     /**
-     * @return BelongsToMany<Episode, $this>
+     * @return BelongsToMany<Episode, $this, EpisodeAiPersona, 'pivot'>
      */
     public function episodes(): BelongsToMany
     {

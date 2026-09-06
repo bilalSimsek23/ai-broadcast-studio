@@ -1,68 +1,81 @@
+<!-- task-id: TASK-0002 -->
 # Current task
 
-> Bootstrap (repo + Claude/GPT workflow + review governance) is **done**
-> — `APPROVED_WITH_NOTES`, archived under `.agents/reviews/`.
+> Completed: **bootstrap** (`APPROVED_WITH_NOTES`) · **TASK-0001 core domain
+> foundation** (`APPROVED`, 0 findings). Both archived under `.agents/reviews/`.
 
-## TASK-0001 — CORE DOMAIN FOUNDATION
+## TASK-0002 — STATIC ANALYSIS BASELINE
 
-**Status:** in review — implementation + tests complete, running GPT review.
+**Status:** ✅ COMPLETE — GPT verdict `APPROVED_WITH_NOTES`, 0 blocking findings,
+1 non-blocking doc note (fixed post-verdict). 1 review round.
+(`.agents/reviews/2026-09-06T17-25-09-629Z-APPROVED_WITH_NOTES.json`)
 **Owner:** CLAUDE (implementation) · GPT (review)
-**Scope:** base data model only — models, relations, enums, migrations,
-factories, tests. **No** AI/STT/TTS/realtime/UI/avatar/Filament/HTTP.
+**Scope:** tooling only — PHPStan/Larastan baseline + review-workflow
+integration + per-task round counter. **No** `app/AI/Contracts`, provider
+impls, `FakeTextProvider`, resolver, STT/TTS, Filament, studio UI, or new
+domain models.
 
 ### Delivered
 
-**Enums** (`app/Enums/`, backed string, `declare(strict_types=1)`)
-- `ShowStatus`: Draft, Active, Inactive, Archived
-- `AiPersonaStatus`: Draft, Active, Inactive, Archived (separate from
-  `ShowStatus` by design — lifecycles expected to diverge)
-- `EpisodeStatus`: Draft, Preparing, Ready, Live, Completed, Archived
-  (+ `isLive()` / `isConcluded()` helpers)
+**PHPStan / Larastan**
+- `larastan/larastan:^3.0` (resolves `v3.11.0` + `phpstan/phpstan 2.2.x`) as a
+  dev dependency (compatible with Laravel 13 / PHP 8.4).
+- `phpstan.neon` at **level 6**, `includes` the Larastan extension.
+- Analysis scope: `app/`, `config/`, `database/factories/`,
+  `database/seeders/`, `routes/`. **Migrations excluded** (one-shot declarative
+  schema DSL; poor noise/benefit ratio) — documented in the neon file.
+- `vendor/bin/phpstan analyse` runs **clean at level 6** — **no baseline
+  file**, **no broad ignores**. `reportUnmatchedIgnoredErrors: true`.
+- `composer stan` (= `phpstan analyse --memory-limit=512M`) as the one-command
+  developer gate (the default 128M PHP CLI limit is not enough for Larastan).
 
-**Migrations** (`database/migrations/2026_09_06_17000{1..6}_*`)
-- `shows`, `ai_personas`, `episodes`, `episode_ai_persona`, `episode_topics`,
-  `episode_questions` — with FKs, indexes, and a **unique
-  `(episode_id, ai_persona_id)`** on the pivot.
-- Deletion policy is deliberate (see `.agents/architecture.md` §2a):
-  Show-with-episodes = **RESTRICT**; AiPersona-in-a-line-up = **RESTRICT**;
-  Episode children (pivot / topics / questions) = **CASCADE**.
-- **No SoftDeletes** — status enums + RESTRICT are the archival strategy.
+**Existing-code typing fixes (no behaviour change)**
+- `AiPersona::episodes()` / `Episode::aiPersonas()` PHPDoc: completed the
+  `BelongsToMany<Related, $this, EpisodeAiPersona, 'pivot'>` template params
+  to match the custom `->using()` pivot. Schema, domain semantics, deletion
+  policy, enum behaviour and vendor-neutrality rules are unchanged.
 
-**Models** (`app/Models/`)
-- `Show`, `AiPersona`, `Episode`, `EpisodeTopic`, `EpisodeQuestion`, and the
-  `EpisodeAiPersona` pivot model (`sort_order` cast to int).
-- `App\Models\Concerns\HasUuid` — auto `uuid` on create + `getRouteKeyName()`
-  → `uuid`.
-- `#[Fillable([...])]` per column; `casts()` for enums / `array`
-  (`screen_settings`) / `datetime` (`broadcast_at`) / `integer`.
-- Relations: `Show→episodes`; `Episode→show, aiPersonas, topics`;
-  `AiPersona→episodes`; `EpisodeTopic→episode, questions`;
-  `EpisodeQuestion→topic`. Pivot exposes `sort_order` + `episode_instructions`
-  and orders by `sort_order`.
-- `AppServiceProvider`: `Model::preventLazyLoading(! isProduction())`.
+**Review workflow**
+- `.agents/scripts/review.sh`: gates reordered to the ideal sequence
+  (1 harness self-tests → 2 Pint → 3 `php artisan test` → 4 PHPStan level 6)
+  and made **fail-closed** — any failed/missing gate aborts with exit 1 and
+  the GPT review is **not** run. PHPStan runs with `--memory-limit=512M`.
+- The captured `.agents/last-test-run.txt` (command + exit + concise result
+  per gate) is what the reviewer sees; on a clean run PHPStan's section is
+  just `[OK] No errors`, so no analyzer-output bloat reaches GPT context.
 
-**Factories** (`database/factories/`) — one per model, each producing valid
-related graphs (`Episode::factory()->forShow($s)`, `->forEpisode()`,
-`->forTopic()`, status states).
-
-**Tests** — `tests/Feature/Domain/*` (RefreshDatabase) + `tests/Unit/Enums/*`.
-Covers the 10 required behaviours + integrity-failure paths (RESTRICT on
-Show/AiPersona delete, duplicate pivot → `QueryException`, bad FK rejected,
-cascade on Episode/Topic delete). **34 tests / 75 assertions passing.**
+**Round counter (per-task aware)**
+- `gpt-review.mjs` now tags every archived verdict with `task` = the active id
+  from `.agents/current-task.md` (`<!-- task-id: TASK-xxxx -->` marker, else
+  first `# TASK-xxxx` heading, else `null`).
+- New `.agents/scripts/lib/loop-status.mjs` (`currentTaskId`,
+  `taskRoundSummary`) + rewritten `review-loop-status.mjs` count **only the
+  current task's rounds**; legacy/untagged archives (bootstrap, TASK-0001) are
+  excluded. Budget warnings (>5 / >10) fire on the task-scoped count. Old
+  archive files without `task` don't break the script.
 
 ### Acceptance checklist
 
-- [x] Migrations valid (`migrate:fresh` clean)
-- [x] Models + relations correct (tinker + tests)
-- [x] Enums present
-- [x] DB integrity constraints present (unique + FK restrict/cascade)
-- [x] Factories present
-- [x] Tests passing (34/34)
-- [x] Pint passing
-- [ ] GPT verdict `APPROVED` / `APPROVED_WITH_NOTES`
-- [ ] No unresolved blocking finding
+- [x] PHPStan/Larastan installed, level 6 active
+- [x] `vendor/bin/phpstan analyse` clean, no broad baseline/ignore
+- [x] Existing domain behaviour unchanged (typing/PHPDoc only)
+- [x] `review.sh` runs the PHPStan gate, fail-closed
+- [x] Analysis result provided to GPT (command + exit + summary in capture)
+- [x] Round counter is current-task aware
+- [x] `node --test .agents/scripts/*.test.mjs` passing
+- [x] `vendor/bin/pint --test` passing
+- [x] `php artisan test` passing
+- [x] GPT verdict `APPROVED_WITH_NOTES`
+- [x] No unresolved blocking finding
+
+### Resolved after the verdict (non-blocking doc note)
+
+- `.agents/architecture.md` §2a said the logical→vendor resolver follow-up was
+  "TASK-0002"; corrected to **TASK-0003** (and removed a stale "(TASK-0002)"
+  from the §1 static-analysis row). Docs only — no code / gate impact, so no
+  re-review.
 
 ### Next task (draft, not started)
 
-**TASK-0002** — Install & configure PHPStan/Larastan (level 6) + enforce it in
-`review.sh`; then `app/AI/Contracts` + `FakeTextProvider` + `config/ai.php`.
+**TASK-0003** — `app/AI/Contracts` (`TextGenerationProvider` + neutral DTOs) +
+`FakeTextProvider` + the full `config/ai.php` logical→vendor resolver.

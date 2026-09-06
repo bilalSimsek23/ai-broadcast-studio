@@ -2,26 +2,27 @@
 // Review-loop diagnosis (CLAUDE.md section 7 - round budget).
 //
 // Reads the archived verdicts under .agents/reviews/ and prints:
-//   - how many review rounds have run
+//   - how many review rounds belong to the CURRENT task (from current-task.md);
+//     legacy archives without a `task` field are not counted toward any task
 //   - the latest verdict
 //   - NEW / STILL_OPEN / RESOLVED / NON_BLOCKING findings between the last two
-//     rounds (by fingerprint)
-//   - a warning once the round budget (5 / 10) is exceeded
+//     rounds OF THIS TASK (by fingerprint)
+//   - a warning once the task's round budget (5 / 10) is exceeded
 //
 // Read-only. Never calls the API. Exit 0 always (it is a report, not a gate).
 
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { resolve, dirname, sep } from 'node:path';
+import { readdirSync, readFileSync, realpathSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { classifyFindings } from './lib/findings.mjs';
 import { isBlockingFinding } from './lib/verdict.mjs';
+import { currentTaskId, taskRoundSummary } from './lib/loop-status.mjs';
 
 let repoRoot = process.cwd();
-try { repoRoot = realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()); } catch {}
+try {
+  repoRoot = realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+} catch {}
 const reviewsDir = resolve(repoRoot, '.agents/reviews');
-if (!(realpathSync(reviewsDir) === reviewsDir || realpathSync(reviewsDir).startsWith(dirname(reviewsDir) + sep))) {
-  // best-effort containment; carry on
-}
 
 let files;
 try {
@@ -36,25 +37,49 @@ if (files.length === 0) {
 }
 
 function load(name) {
-  try { return JSON.parse(readFileSync(resolve(reviewsDir, name), 'utf8')); } catch { return null; }
+  try {
+    const obj = JSON.parse(readFileSync(resolve(reviewsDir, name), 'utf8'));
+    obj.name = name;
+    return obj;
+  } catch {
+    return { name, unreadable: true };
+  }
 }
 
-const rounds = files.length;
-const latest = load(files[files.length - 1]);
-const prev = files.length > 1 ? load(files[files.length - 2]) : null;
+const archives = files.map(load); // chronological (filenames are ISO timestamps)
 
-console.log(`Review rounds archived: ${rounds}`);
-console.log(`Latest verdict:         ${latest ? latest.verdict : '(unreadable)'}  [${files[files.length - 1]}]`);
+let taskMd = '';
+try {
+  const p = resolve(repoRoot, '.agents/current-task.md');
+  if (existsSync(p)) taskMd = readFileSync(p, 'utf8');
+} catch {}
+const taskId = currentTaskId(taskMd);
 
-if (latest && Array.isArray(latest.findings)) {
-  const blocking = latest.findings.filter(isBlockingFinding);
-  const nonBlocking = latest.findings.filter((f) => !isBlockingFinding(f));
-  console.log(`Latest findings:        ${latest.findings.length} total  (${blocking.length} blocking, ${nonBlocking.length} non-blocking)`);
-  console.log(`Latest required_fixes:  ${Array.isArray(latest.required_fixes) ? latest.required_fixes.length : 0}`);
+const summary = taskRoundSummary(archives, taskId);
+const latest = archives[archives.length - 1];
+
+console.log(`Current task:            ${taskId ?? '(not derivable from current-task.md)'}`);
+if (summary.taskRounds === null) {
+  console.log(`Rounds for this task:    n/a (no task id - cannot scope; ${summary.total} verdict(s) archived overall)`);
+} else {
+  console.log(`Rounds for this task:    ${summary.taskRounds}   (of ${summary.total} archived overall; ${summary.untaggedArchives} legacy/untagged)`);
+}
+console.log(`Latest verdict:          ${latest && latest.verdict ? latest.verdict : '(unreadable)'}  [${latest.name}]`);
+
+// Finding delta between the last two rounds OF THIS TASK (fall back to the last
+// two archives overall only when the task cannot be scoped).
+const scoped = summary.taskRounds !== null ? summary.rounds : archives;
+const latestScoped = scoped[scoped.length - 1];
+const prevScoped = scoped.length > 1 ? scoped[scoped.length - 2] : null;
+
+if (latestScoped && Array.isArray(latestScoped.findings)) {
+  const blocking = latestScoped.findings.filter(isBlockingFinding);
+  console.log(`Latest findings:         ${latestScoped.findings.length} total  (${blocking.length} blocking, ${latestScoped.findings.length - blocking.length} non-blocking)`);
+  console.log(`Latest required_fixes:   ${Array.isArray(latestScoped.required_fixes) ? latestScoped.required_fixes.length : 0}`);
 }
 
-if (prev && latest) {
-  const c = classifyFindings(prev.findings, latest.findings, isBlockingFinding);
+if (prevScoped && latestScoped) {
+  const c = classifyFindings(prevScoped.findings, latestScoped.findings, isBlockingFinding);
   const show = (label, arr) => {
     console.log(`\n${label} (${arr.length}):`);
     for (const r of arr) console.log(`  - [${r.severity}${r.category ? '/' + r.category : ''}] ${r.file}\n      ${r.fingerprint}`);
@@ -72,10 +97,11 @@ if (prev && latest) {
   }
 }
 
-if (rounds > 10) {
-  console.log('\n*** ROUND BUDGET EXCEEDED (>10): STOP automatic fix/review. Report a review-loop failure and do root-cause analysis before any further code change. ***');
-} else if (rounds > 5) {
-  console.log('\n*** Round budget exceeded (>5): before changing code again, separate resolved / still-open / repeated / non-blocking / genuinely-new findings and only fix real unresolved blockers. ***');
+const n = summary.taskRounds;
+if (n !== null && n > 10) {
+  console.log(`\n*** ROUND BUDGET EXCEEDED for ${taskId} (>10): STOP automatic fix/review. Report a review-loop failure and do root-cause analysis before any further code change. ***`);
+} else if (n !== null && n > 5) {
+  console.log(`\n*** Round budget exceeded for ${taskId} (>5): before changing code again, separate resolved / still-open / repeated / non-blocking / genuinely-new findings and only fix real unresolved blockers. ***`);
 }
 
 process.exit(0);

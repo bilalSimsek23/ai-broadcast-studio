@@ -1,0 +1,23 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+
+    paths:
+        - app
+        - config
+        - database/factories
+        - database/seeders
+        - routes
+
+    # Migrations are excluded from static analysis: they are one-shot,
+    # declarative schema DSL with little typing value and a poor noise/benefit
+    # ratio (anonymous Migration classes + Blueprint closures). Re-evaluate if
+    # migration logic ever grows beyond schema definitions.
+    excludePaths:
+        - database/migrations/*
+
+    # Keep the baseline honest - no broad ignores. Any suppression added here
+    # must be a specific message on a specific path with a written reason.
+    reportUnmatchedIgnoredErrors: true

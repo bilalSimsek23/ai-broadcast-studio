@@ -74,9 +74,13 @@ degradation, and observability outrank feature velocity.
   `array` where a DTO or a shaped value object is meaningful. Avoid `mixed`
   unless genuinely unavoidable and documented.
 - **PSR-12** formatting, enforced by **Laravel Pint** (`vendor/bin/pint`).
-- **Static analysis** with **PHPStan / Larastan** at a level agreed in
-  `.agents/architecture.md` (start at level 6, ratchet up). Do not lower the
-  level to make code pass.
+- **Static analysis** with **PHPStan / Larastan** — installed, **level 6**,
+  config in `phpstan.neon` (scope: `app/`, `config/`, `database/factories/`,
+  `database/seeders/`, `routes/`; migrations excluded). Run with
+  `composer stan` (= `phpstan analyse --memory-limit=512M`). **No broad
+  baseline / ignore**; do not lower the level or add a global ignore to make
+  code pass. Fix the real issue, or add a *specific* message-on-path ignore
+  with a written reason. Ratchet the level up in a later task.
 - **Naming**
   - Controllers: singular resource + `Controller` (`EpisodeController`).
   - Services: `XyzService`; single-purpose operations: `XyzAction` with
@@ -130,15 +134,18 @@ degradation, and observability outrank feature velocity.
 - **Coverage expectation:** domain/service layer is the priority for coverage;
   aim high there rather than chasing a global percentage. New service code
   without tests is a review blocker.
-- **Commands to run before requesting review:**
+- **Commands to run before requesting review** (the required quality gates, in
+  order):
   ```sh
   node --test .agents/scripts/*.test.mjs   # review-harness self-tests
-  vendor/bin/pint --test
-  vendor/bin/phpstan analyse                # once installed
-  php artisan test
+  vendor/bin/pint --test                   # style
+  php artisan test                         # application tests
+  composer stan                            # PHPStan/Larastan level 6 (--memory-limit=512M)
   ```
   `.agents/scripts/review.sh` runs all of these, captures their output to
-  `.agents/last-test-run.txt`, and passes it to the GPT reviewer (see §7).
+  `.agents/last-test-run.txt`, and — **only if every gate passes** — runs the
+  GPT reviewer (see §7). A failed or missing gate is fail-closed: the review is
+  not run.
 
 ---
 
@@ -232,25 +239,26 @@ Development runs as a **two-agent loop**:
 1. **CLAUDE** reads `.agents/current-task.md`, `.agents/project-context.md`,
    and `.agents/architecture.md`, then implements the task completely
    (code + tests + docs).
-2. **CLAUDE** runs the quality gates and captures output:
+2. **CLAUDE** runs the required quality gates (in order) and captures output:
    ```sh
-   node --test .agents/scripts/*.test.mjs   # review-harness self-tests
-   vendor/bin/pint --test
-   vendor/bin/phpstan analyse                # once installed
-   php artisan test
+   node --test .agents/scripts/*.test.mjs   # 1  review-harness self-tests
+   vendor/bin/pint --test                   # 2  style
+   php artisan test                          # 3  application tests
+   composer stan                             # 4  PHPStan/Larastan level 6
    ```
-3. **CLAUDE** runs the review:
-   ```sh
-   node .agents/scripts/gpt-review.mjs
-   ```
-   or the wrapper that also records test output and archives the result:
+3. **CLAUDE** runs the review — normally the wrapper, which runs gates 1–4,
+   captures their output, is **fail-closed** (a failed/missing gate → exit 1,
+   no GPT call), then runs the reviewer and the loop-status report:
    ```sh
    .agents/scripts/review.sh
    ```
+   (`node .agents/scripts/gpt-review.mjs` runs the reviewer alone, without the
+   gates.)
 4. The reviewer writes `.agents/gpt-review.json` (transient, gitignored) and a
-   timestamped copy under `.agents/reviews/`. `review.sh` then prints
-   `review-loop-status.mjs` (round count + NEW/RESOLVED/STILL_OPEN/NON_BLOCKING
-   vs the previous round).
+   timestamped copy under `.agents/reviews/` (tagged with the active
+   `task` id). `review.sh` then prints `review-loop-status.mjs` — the round
+   count **for the current task only** (legacy/untagged archives excluded)
+   + NEW/RESOLVED/STILL_OPEN/NON_BLOCKING vs the previous round of this task.
 5. Read the `verdict` (three valid values):
    - **`APPROVED`** → task requirements met, no unresolved blocking finding,
      nothing further to note. Task is done. Report and stop.
@@ -318,12 +326,14 @@ not to iteratively redesign the review harness.
 - **Out-of-scope observations.** A genuine Critical/High problem outside the
   current task may be reported with `category:"out-of-scope"`, `blocking:false`,
   and `problem` beginning `OUT_OF_SCOPE_NOTE:`. It does not block the task.
-- **Round budget.** Target 1–3 rounds. Over **5 rounds** → before any further
-  code change, run `review-loop-status.mjs`, separate resolved / still-open /
+- **Round budget** (counted **per task** — `review-loop-status.mjs` scopes to
+  the active `task` id and ignores earlier tasks' / bootstrap's archives).
+  Target 1–3 rounds. Over **5 rounds for the task** → before any further code
+  change, run `review-loop-status.mjs`, separate resolved / still-open /
   repeated / non-blocking / genuinely-new findings, and only fix real
-  unresolved blockers. Over **10 rounds** → **stop the fix/review loop**,
-  report it as a *review-loop failure*, and do a written root-cause analysis
-  first. Repeatedly changing code for the same non-blocking finding is
+  unresolved blockers. Over **10 rounds for the task** → **stop the fix/review
+  loop**, report it as a *review-loop failure*, and do a written root-cause
+  analysis first. Repeatedly changing code for the same non-blocking finding is
   prohibited.
 - **Approval rule.** Current-task requirements met + relevant tests pass + no
   unresolved `blocking:true` finding in production code ⇒ `APPROVED` (no

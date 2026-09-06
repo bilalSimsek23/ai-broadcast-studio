@@ -4,19 +4,23 @@
 #
 # Usage:  .agents/scripts/review.sh
 #
-# - Captures the harness self-tests, Pint, PHPStan (if installed) and PHPUnit
-#   output to $GPT_REVIEW_TEST_RESULTS (default .agents/last-test-run.txt).
+# - Runs the REQUIRED quality gates in order and captures their output to
+#   $GPT_REVIEW_TEST_RESULTS (default .agents/last-test-run.txt):
+#     1. review harness self-tests (node --test)
+#     2. Laravel Pint (style)
+#     3. PHPUnit (php artisan test)
+#     4. PHPStan / Larastan (static analysis, level 6)
 # - The destination is validated (dedicated .agents/<name>.txt, not a symlink,
 #   not tracked, gitignored) and written via a fresh temp file + atomic rename,
 #   so a planted symlink/hard link at that path can never be followed or
 #   truncated.
-# - Runs .agents/scripts/gpt-review.mjs, which reads that same file plus the
-#   project context and the git diff.
-# - Exit code mirrors the reviewer: 0 = APPROVED or APPROVED_WITH_NOTES (task
-#   complete), 10 = CHANGES_REQUIRED, 11 = nothing to review, anything else =
-#   harness error. Quality-gate failures do NOT abort the review - the reviewer
-#   is told about them.
-# - Then prints review-loop-status.mjs (round count + finding deltas).
+# - FAIL-CLOSED: if ANY gate fails or is missing, the GPT review is NOT run and
+#   the script exits 1. A broken build is never sent as if all gates passed.
+# - Otherwise runs .agents/scripts/gpt-review.mjs (which reads the same capture
+#   file plus project context + git diff) and then review-loop-status.mjs.
+# - Exit code: 0 = APPROVED or APPROVED_WITH_NOTES (task complete),
+#   10 = CHANGES_REQUIRED, 11 = nothing to review, 1 = a quality gate failed,
+#   anything else = harness error.
 
 set -uo pipefail
 
@@ -53,6 +57,12 @@ tmp="$(mktemp ".agents/.review-capture.XXXXXX")" || { echo "review.sh: mktemp fa
 chmod 600 "$tmp"
 trap 'rm -f "$tmp"' EXIT
 
+gates_failed=0
+failed_list=""
+
+# Every gate here is REQUIRED. A failed (or missing) gate is fail-closed: the
+# GPT review is NOT run, so a broken build can never be sent as if all quality
+# gates had passed.
 run_gate() {
   local label="$1"; shift
   {
@@ -62,8 +72,10 @@ run_gate() {
     echo "--------------------------------------------------------------------"
   } >> "$tmp"
   if [ ! -x "$1" ] && ! command -v "$1" >/dev/null 2>&1; then
-    echo "(skipped - $1 not available)" >> "$tmp"
-    echo ">> ${label}: SKIPPED (not installed)"
+    echo "(MISSING - $1 not available)" >> "$tmp"
+    echo ">> ${label}: FAIL (command not found: $1)"
+    gates_failed=$((gates_failed + 1))
+    failed_list="${failed_list}  - ${label} (command not found)\n"
     return 0
   fi
   # Quality gates run repository-controlled code (tests, hooks, plugins). Strip
@@ -76,24 +88,36 @@ run_gate() {
     echo ">> ${label}: PASS"
   else
     echo ">> ${label}: FAIL (exit ${status})"
+    gates_failed=$((gates_failed + 1))
+    failed_list="${failed_list}  - ${label} (exit ${status})\n"
   fi
   return 0
 }
 
+# Ideal order: harness self-tests -> style -> app tests -> static analysis -> GPT.
 echo "Capturing quality gates to ${out} ..."
-run_gate "Review harness self-tests (node --test)" node --test .agents/scripts/*.test.mjs
-run_gate "Laravel Pint (style)"        vendor/bin/pint --test
-run_gate "PHPStan / Larastan (static)" vendor/bin/phpstan analyse --no-progress
-run_gate "PHPUnit (php artisan test)"  php artisan test
+run_gate "Review harness self-tests (node --test)"  node --test .agents/scripts/*.test.mjs
+run_gate "Laravel Pint (style)"                      vendor/bin/pint --test
+run_gate "PHPUnit (php artisan test)"                php artisan test
+run_gate "PHPStan / Larastan (static, level 6)"      vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
 {
   echo "===================================================================="
   echo "## captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "## gates failed: ${gates_failed}"
 } >> "$tmp"
 
 # atomic replace of the (validated, non-symlink) destination
 mv -f "$tmp" "$out"
 trap - EXIT
+
+if [ "$gates_failed" -gt 0 ]; then
+  echo
+  echo "FAIL-CLOSED: ${gates_failed} quality gate(s) failed - NOT sending to GPT review:"
+  printf '%b' "$failed_list"
+  echo "Full output: ${out}. Fix the gate(s) and re-run."
+  exit 1
+fi
 
 echo
 echo "Running GPT review ..."

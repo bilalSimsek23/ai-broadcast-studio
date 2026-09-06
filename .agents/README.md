@@ -15,9 +15,11 @@ full contract is in [`../CLAUDE.md`](../CLAUDE.md) §7.
 | `scripts/lib/path-policy.mjs` | Path allow/deny + git binary detection. | yes |
 | `scripts/lib/verdict.mjs` | 3-verdict model + severity/blocking + self-contradiction normalization. | yes |
 | `scripts/lib/findings.mjs` | Finding fingerprint + round-to-round NEW/RESOLVED/STILL_OPEN/NON_BLOCKING comparison. | yes |
-| `scripts/review-loop-status.mjs` | Loop diagnosis: round count + finding deltas + budget warnings. | yes |
+| `scripts/lib/loop-status.mjs` | `currentTaskId` + `taskRoundSummary` — per-task round accounting. | yes |
+| `scripts/review-loop-status.mjs` | Loop diagnosis: **current-task** round count + finding deltas + budget warnings. | yes |
 | `scripts/gpt-review.test.mjs` | `node --test` self-tests for the libs. | yes |
-| `scripts/review.sh` | Run self-tests + quality gates → reviewer → loop status. | yes |
+| `scripts/review.sh` | Run gates (self-tests → Pint → tests → PHPStan), **fail-closed**, → reviewer → loop status. | yes |
+| `../phpstan.neon` (repo root) | PHPStan/Larastan config, level 6. | yes |
 | `reviews/` | Timestamped archive of every verdict (`<iso-ts>-<verdict>.json`). | dir + README tracked; `*.json` gitignored |
 | `skills/antigravity-gpt-review/` | Portable source skill this workflow derives from. | yes |
 | `gpt-review.json` | Transient latest verdict. | **gitignored** |
@@ -33,22 +35,29 @@ export OPENAI_API_KEY="sk-..."
 export OPENAI_REVIEW_MODEL="gpt-5.6-sol"   # default
 export OPENAI_REVIEW_EFFORT="high"          # default
 
-# 3a. review the current diff only
+# 3a. review the current diff only (no quality gates)
 node .agents/scripts/gpt-review.mjs
 
-# 3b. or: run harness self-tests + style + static analysis + tests,
-#     capture output, then review
+# 3b. or: run the required gates (in order), capture output, and — only if
+#     ALL gates pass — run the review + loop status:
+#       1 node --test .agents/scripts/*.test.mjs   (harness self-tests)
+#       2 vendor/bin/pint --test                   (style)
+#       3 php artisan test                         (application tests)
+#       4 composer stan                            (PHPStan/Larastan level 6)
 .agents/scripts/review.sh
 
-# harness self-tests on their own
+# individual gates
 node --test .agents/scripts/*.test.mjs
+composer stan            # = phpstan analyse --memory-limit=512M
+node .agents/scripts/review-loop-status.mjs   # current-task round diagnosis
 ```
 
 Exit code: `0` = `APPROVED` **or** `APPROVED_WITH_NOTES` (both complete the
 task), `10` = `CHANGES_REQUIRED`, `11` = nothing to review (no changes — **no
 verdict is written or archived**, so a clean tree can never manufacture a
-passing verdict), anything else = harness error (missing key, API error,
-malformed response, withheld/unsafe files, git failure).
+passing verdict), `1` = a quality gate failed (**fail-closed: the review was
+not run**), anything else = harness error (missing key, API error, malformed
+response, withheld/unsafe files, git failure).
 
 ## What the reviewer sees
 
@@ -105,3 +114,7 @@ Safety layers:
 - Review-harness observations that don't break feature-review correctness are
   `category:"review-infrastructure"`, `blocking:false`, and never reopened as
   blockers in later rounds (see `review-loop-status.mjs`).
+- Each archived verdict is tagged with `task` (the active id from
+  `current-task.md`). `review-loop-status.mjs` counts rounds **per task**;
+  archives from bootstrap / earlier tasks (no `task`, or a different id) are
+  excluded, so the round-budget warnings reflect the task in hand.

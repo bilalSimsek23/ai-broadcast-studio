@@ -20,6 +20,7 @@ import { findSecrets, hasSecret } from './lib/secret-scan.mjs';
 import { isSensitivePath, binaryPathsFromNumstat, looksBinary, diffReportsBinary } from './lib/path-policy.mjs';
 import { normalizeReview, isBlockingFinding } from './lib/verdict.mjs';
 import { fingerprint, classifyFindings } from './lib/findings.mjs';
+import { currentTaskId, taskRoundSummary } from './lib/loop-status.mjs';
 
 const FAKE = {
   openaiKey: 'sk-' + 'proj-Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56',
@@ -138,7 +139,7 @@ test('review.sh strips OPENAI_API_KEY from quality-gate subprocesses', () => {
 test('the harness source files contain no contiguous secret', () => {
   const here = new URL('.', import.meta.url).pathname;
   for (const f of ['gpt-review.test.mjs', 'lib/secret-scan.mjs', 'lib/path-policy.mjs', 'lib/verdict.mjs',
-                   'lib/findings.mjs', 'gpt-review.mjs', 'review-loop-status.mjs', 'review.sh']) {
+                   'lib/findings.mjs', 'lib/loop-status.mjs', 'gpt-review.mjs', 'review-loop-status.mjs', 'review.sh']) {
     assert.deepEqual(findSecrets(readFileSync(here + f, 'utf8')), [], `${f} should not trip the scanner`);
   }
 });
@@ -357,6 +358,45 @@ test('fingerprint prefers the reviewer id, else derives file::category::rootcaus
     fingerprint({ fingerprint: 'app/foo.php::correctness::off-by-one', problem: 'totally different words' }),
     'app/foo.php::correctness::off-by-one',
   );
+});
+
+// --- per-task round counting ---------------------------------------
+
+test('currentTaskId reads the explicit marker, else the first TASK heading', () => {
+  assert.equal(currentTaskId('<!-- task-id: TASK-0002 -->\n# Current task\n## TASK-0002 — x'), 'TASK-0002');
+  assert.equal(currentTaskId('# Current task\n\n## TASK-0007 — Something\n\n### Next task\nTASK-0008 draft'), 'TASK-0007');
+  assert.equal(currentTaskId('lowercase marker <!-- TASK-ID: task-0013 -->'), 'TASK-0013');
+  assert.equal(currentTaskId('# no task here at all'), null);
+  assert.equal(currentTaskId(''), null);
+});
+
+test('taskRoundSummary counts only the current task, ignoring legacy/other archives', () => {
+  const archives = [
+    { name: 'a', verdict: 'CHANGES_REQUIRED' },                       // bootstrap, untagged
+    { name: 'b', verdict: 'APPROVED_WITH_NOTES' },                    // bootstrap, untagged
+    { name: 'c', verdict: 'APPROVED', task: 'TASK-0001' },            // previous task
+    { name: 'd', verdict: 'CHANGES_REQUIRED', task: 'TASK-0002' },
+    { name: 'e', verdict: 'CHANGES_REQUIRED', task: 'TASK-0002' },
+    { name: 'f', verdict: 'APPROVED', task: 'TASK-0002' },
+  ];
+  const s = taskRoundSummary(archives, 'TASK-0002');
+  assert.equal(s.taskId, 'TASK-0002');
+  assert.equal(s.taskRounds, 3);
+  assert.equal(s.total, 6);
+  assert.equal(s.untaggedArchives, 2);
+  assert.deepEqual(s.rounds.map((r) => r.name), ['d', 'e', 'f']);
+});
+
+test('taskRoundSummary returns null rounds when the task id is unknown (no false warning)', () => {
+  const s = taskRoundSummary([{ task: 'TASK-0001' }, { task: null }], null);
+  assert.equal(s.taskRounds, null);
+  assert.equal(s.total, 2);
+  assert.deepEqual(s.rounds, []);
+});
+
+test('taskRoundSummary tolerates a missing/empty archive list', () => {
+  assert.equal(taskRoundSummary(undefined, 'TASK-0002').taskRounds, 0);
+  assert.equal(taskRoundSummary([], 'TASK-0002').total, 0);
 });
 
 test('classifyFindings buckets NEW / STILL_OPEN / RESOLVED / NON_BLOCKING', () => {

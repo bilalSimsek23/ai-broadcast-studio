@@ -56,6 +56,7 @@ import { resolve, dirname, sep } from 'node:path';
 import { findSecrets } from './lib/secret-scan.mjs';
 import { isSensitivePath, binaryPathsFromNumstat, looksBinary, diffReportsBinary } from './lib/path-policy.mjs';
 import { normalizeReview, isPassing } from './lib/verdict.mjs';
+import { currentTaskId } from './lib/loop-status.mjs';
 
 const key = process.env.OPENAI_API_KEY;
 if (!key) {
@@ -730,6 +731,11 @@ try {
 review = normalizeReview(review);
 // (Any unreviewable changed file already fail-closed the run locally, before
 //  the API call - see the `unreviewed` check above.)
+
+// Tag the archived verdict with the active task id (from current-task.md) so
+// review-loop-status.mjs can scope its round count to THIS task. Legacy
+// archives without this field are simply not counted toward any task.
+review.task = currentTaskId(currentTask);
 
 writeOut(review);
 archiveReviewOrExit(review);

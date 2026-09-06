@@ -14,7 +14,7 @@ built._
 | DB (prod) | Postgres or MySQL (TBD) | migrations must be portable |
 | Queue | database driver to start; Redis later | jobs must be idempotent |
 | Style | Laravel Pint (PSR-12) | `vendor/bin/pint` |
-| Static analysis | PHPStan + Larastan | start level 6, ratchet up; **not yet installed** |
+| Static analysis | PHPStan + Larastan | **level 6**, `phpstan.neon`; `composer stan`; no baseline; ratchet up in a later task |
 | Tests | PHPUnit (Laravel default) | `php artisan test` |
 | Review | `gpt-5.6-sol` via `.agents/scripts/gpt-review.mjs` | **exists** |
 
@@ -52,11 +52,28 @@ Flat layout: `app/Models/*`, `app/Enums/*`, `app/Models/Concerns/HasUuid.php`.
 | Table | PK | Public key | Notable columns |
 |-------|----|-----------|-----------------|
 | `shows` | `id` | `uuid` (unique) | `name`, `slug` (unique), `description?`, `status` (`ShowStatus`, default `draft`, indexed) |
-| `ai_personas` | `id` | `uuid` (unique) | persistent identity fields, provider bindings, `screen_settings` (json), `status` (`AiPersonaStatus`, indexed) |
+| `ai_personas` | `id` | `uuid` (unique) | persistent identity fields; `ai_provider` / `ai_model` / `voice_provider` / `voice_id` = **logical** config keys (see below); `screen_settings` (json); `status` (`AiPersonaStatus`, indexed) |
 | `episodes` | `id` | `uuid` (unique) | `show_id` → `shows` **RESTRICT**, `title`, `episode_number?`, `broadcast_at?` (datetime, indexed), prep/broadcast notes, `status` (`EpisodeStatus`, indexed); index `(show_id, episode_number)` |
 | `episode_ai_persona` | `id` | — | `episode_id` → `episodes` **CASCADE**, `ai_persona_id` → `ai_personas` **RESTRICT**, `sort_order` (default 0), `episode_instructions?`; **unique `(episode_id, ai_persona_id)`**, index `(episode_id, sort_order)` |
 | `episode_topics` | `id` | `uuid` (unique) | `episode_id` → `episodes` **CASCADE**, `title`, `description?`, `ai_context?`, `presenter_notes?`, `sort_order`; index `(episode_id, sort_order)` |
 | `episode_questions` | `id` | `uuid` (unique) | `episode_topic_id` → `episode_topics` **CASCADE**, `question`, `ai_context?`, `presenter_notes?`, `sort_order`; index `(episode_topic_id, sort_order)` |
+
+**AiPersona provider/voice fields — logical keys, not vendor identifiers**
+
+The task specifies the columns `ai_provider`, `ai_model`, `voice_provider`,
+`voice_id`. They store **logical configuration keys** (e.g. `default`, `fast`,
+`host_rebuttal`), never a vendor name, base URL, or raw model id
+(CLAUDE.md §5).
+
+**Enforced now:** `config/ai.php` holds a `persona` allow-list per column
+(logical keys only). `AiPersona::booted()` registers a `saving` hook
+(`assertLogicalConfigKeys()`) that throws `App\Exceptions\InvalidLogicalConfigKey`
+for any non-null value outside its allow-list, so
+`AiPersona::create(['ai_provider' => 'openai'])` fails and persists nothing.
+`null` is always allowed.
+
+**Follow-up (TASK-0003):** grow `config/ai.php` into the full logical→vendor
+resolver (provider + model + params, credentials via `env()` there only).
 
 **Deletion policy (deliberate)**
 
@@ -162,10 +179,12 @@ Files:
 - `.agents/scripts/lib/path-policy.mjs` — path allow/deny + binary detection.
 - `.agents/scripts/lib/verdict.mjs` — 3-verdict model, severity vs blocking, normalization.
 - `.agents/scripts/lib/findings.mjs` — finding fingerprint + round comparison.
-- `.agents/scripts/review-loop-status.mjs` — loop diagnosis (round count, deltas, budget).
+- `.agents/scripts/lib/loop-status.mjs` — `currentTaskId` + `taskRoundSummary` (per-task rounds).
+- `.agents/scripts/review-loop-status.mjs` — loop diagnosis (**current-task** round count, deltas, budget).
 - `.agents/scripts/gpt-review.test.mjs` — `node --test` self-tests.
-- `.agents/scripts/review.sh` — self-tests + quality gates → reviewer → loop status.
-- `.agents/reviews/` — timestamped archive of every verdict.
+- `.agents/scripts/review.sh` — gates (self-tests → Pint → tests → PHPStan L6), **fail-closed** → reviewer → loop status.
+- `phpstan.neon` (repo root) — PHPStan/Larastan level 6 config.
+- `.agents/reviews/` — timestamped archive of every verdict (tagged with `task`).
 - `.agents/skills/antigravity-gpt-review/` — the portable skill this is derived
   from, kept for reference/reuse.
 

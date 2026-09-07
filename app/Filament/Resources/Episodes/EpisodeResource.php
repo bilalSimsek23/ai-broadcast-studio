@@ -8,6 +8,7 @@ use App\Filament\Resources\Episodes\Pages\CreateEpisode;
 use App\Filament\Resources\Episodes\Pages\EditEpisode;
 use App\Filament\Resources\Episodes\Pages\ListEpisodes;
 use App\Filament\Resources\Episodes\Pages\PrepareEpisode;
+use App\Filament\Resources\Episodes\Pages\RehearseEpisode;
 use App\Filament\Resources\Episodes\RelationManagers\AiPersonasRelationManager;
 use App\Filament\Resources\Episodes\RelationManagers\TopicsRelationManager;
 use App\Filament\Resources\Episodes\Schemas\EpisodeForm;
@@ -63,6 +64,7 @@ class EpisodeResource extends Resource
             'create' => CreateEpisode::route('/create'),
             'edit' => EditEpisode::route('/{record}/edit'),
             'prepare' => PrepareEpisode::route('/{record}/prepare'),
+            'rehearse' => RehearseEpisode::route('/{record}/rehearse'),
         ];
     }
 }

@@ -1,32 +1,11 @@
 <?php
 
 declare(strict_types=1);
-use App\AI\Providers\Fake\FakeTextProvider;
 
-/*
-|--------------------------------------------------------------------------
-| AI configuration (logical layer only)
-|--------------------------------------------------------------------------
-|
-| Domain models and application/domain code reference LOGICAL keys only; a
-| vendor name, base URL or raw model id never appears outside this file and
-| the future app/AI/Providers/<Vendor>/ adapters (CLAUDE.md §5).
-|
-|  - `persona`  (TASK-0001): allow-lists that keep vendor identifiers out of
-|    the AiPersona binding columns.
-|  - `text`     (TASK-0005): the logical -> provider/model/params resolution
-|    for text generation. Only the deterministic fake driver exists today;
-|    real vendor adapters (with credentials read via env() IN THIS FILE ONLY)
-|    are added in a later task by appending to `text.drivers` / a
-|    `text.connections` entry.
-|
-*/
+use App\AI\Providers\Fake\FakeTextProvider;
+use App\AI\Providers\OpenAi\OpenAiTextProvider;
 
 return [
-
-    // Allowed logical keys for the AiPersona provider/voice binding columns.
-    // Extend these lists as new profiles are defined - never add a vendor name,
-    // base URL, or raw model id.
     'persona' => [
         'ai_provider' => ['default', 'fast', 'host_rebuttal'],
         'ai_model' => ['default', 'small', 'large'],
@@ -35,65 +14,86 @@ return [
     ],
 
     'text' => [
-
         /*
-        | Logical PROVIDER key -> a concrete driver. Application/domain code
-        | names a logical key only (e.g. 'default'); it never names a vendor.
-        | These keys are a superset of config('ai.persona.ai_provider'), so
-        | every value an AiPersona may store resolves here.
+        |----------------------------------------------------------------------
+        | Logical providers
+        |----------------------------------------------------------------------
+        | Product/domain code and AiPersona rows only ever name a LOGICAL
+        | provider key. Which concrete driver backs it is an environment
+        | decision: unset (local / CI / tests) keeps the deterministic,
+        | network-free `fake` driver; `AI_TEXT_DRIVER=openai` in production
+        | routes the same logical keys through the real OpenAI adapter. No
+        | vendor name ever appears on a persona.
         */
         'providers' => [
-            'default' => ['driver' => 'fake'],
-            'fast' => ['driver' => 'fake'],
-            'host_rebuttal' => ['driver' => 'fake'],
+            'default' => ['driver' => env('AI_TEXT_DRIVER', 'fake')],
+            'fast' => ['driver' => env('AI_TEXT_DRIVER', 'fake')],
+            'host_rebuttal' => ['driver' => env('AI_TEXT_DRIVER', 'fake')],
         ],
 
         /*
-        | Logical MODEL key -> provider key + vendor model identifier + default
-        | generation parameters. The vendor model id lives ONLY here. Keys
-        | 'default', 'small', 'large' match config('ai.persona.ai_model');
-        | 'host_rebuttal' is available for application-level calls.
+        |----------------------------------------------------------------------
+        | Logical models
+        |----------------------------------------------------------------------
+        | Each logical model key maps to a logical provider, the concrete
+        | vendor model id to call it with, and centrally-validated default
+        | parameters. The vendor model id is env-overridable so production can
+        | point `default` at e.g. `gpt-4o-mini` without a code change; the
+        | fallback is the fake vendor id used everywhere the fake driver runs.
         */
         'models' => [
             'default' => [
                 'provider' => 'default',
-                'model' => 'fake-balanced-v1',
+                'model' => env('AI_TEXT_MODEL_DEFAULT', 'fake-balanced-v1'),
                 'parameters' => ['temperature' => 0.7, 'max_output_tokens' => 800],
             ],
             'small' => [
                 'provider' => 'fast',
-                'model' => 'fake-small-v1',
+                'model' => env('AI_TEXT_MODEL_SMALL', 'fake-small-v1'),
                 'parameters' => ['temperature' => 0.4, 'max_output_tokens' => 400],
             ],
             'large' => [
                 'provider' => 'default',
-                'model' => 'fake-large-v1',
+                'model' => env('AI_TEXT_MODEL_LARGE', 'fake-large-v1'),
                 'parameters' => ['temperature' => 0.7, 'max_output_tokens' => 2000],
             ],
             'host_rebuttal' => [
                 'provider' => 'host_rebuttal',
-                'model' => 'fake-rebuttal-v1',
+                'model' => env('AI_TEXT_MODEL_HOST_REBUTTAL', 'fake-rebuttal-v1'),
                 'parameters' => ['temperature' => 0.9, 'max_output_tokens' => 600],
             ],
         ],
 
         /*
-        | Driver key -> class implementing
-        | App\AI\Contracts\TextGenerationProvider. Only the deterministic fake
-        | exists today; a real adapter task simply adds entries here.
+        |----------------------------------------------------------------------
+        | Drivers
+        |----------------------------------------------------------------------
+        | driver key => the App\AI\Contracts\TextGenerationProvider class that
+        | implements it. The container resolves the class, so a driver that
+        | needs credentials (openai) is wired up in App\AI\AiServiceProvider
+        | from its `connections` entry below.
         */
         'drivers' => [
             'fake' => FakeTextProvider::class,
+            'openai' => OpenAiTextProvider::class,
         ],
 
         /*
-        | Per-driver connection settings (base URL, credentials via env() HERE
-        | ONLY). Empty until a real adapter is added, e.g.:
-        |   'openai' => ['api_key' => env('OPENAI_API_KEY'), 'base_url' => env('OPENAI_BASE_URL')],
+        |----------------------------------------------------------------------
+        | Per-driver connections
+        |----------------------------------------------------------------------
+        | Credentials and transport settings, read from the environment HERE
+        | only (never in application code, never persisted). The api key is
+        | never logged, echoed, or surfaced in an exception.
         */
         'connections' => [
             'fake' => [],
+            'openai' => [
+                'api_key' => env('OPENAI_API_KEY'),
+                'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+                'timeout' => (int) env('OPENAI_TEXT_TIMEOUT', 30),
+                'connect_timeout' => (int) env('OPENAI_TEXT_CONNECT_TIMEOUT', 10),
+            ],
         ],
     ],
-
 ];

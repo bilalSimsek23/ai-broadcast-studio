@@ -1,6 +1,6 @@
 # Project context — AI Broadcast Studio
 
-_Last updated: 2026-09-06 (bootstrap)_
+_Last updated: 2026-09-07 (TASK-0006 OpenAI adapter + Episode text rehearsal)_
 
 ## What it is
 
@@ -72,19 +72,20 @@ _Not modelled yet (later tasks):_
 
 ## Current phase
 
-**AI text provider foundation (TASK-0005).** Done so far: bootstrap,
-TASK-0001 core domain, TASK-0002 static-analysis baseline,
-TASK-0003 Filament admin, TASK-0004 episode preparation workspace. TASK-0005
-adds the **vendor-neutral text-generation foundation** in `app/AI/**`: the
-`TextGenerationProvider` contract, neutral request/response DTOs, a
-`LogicalModelResolver` (logical provider/model key → provider + vendor model id
-+ default params, driven by a new `config('ai.text')` section), a deterministic
-network-free `FakeTextProvider`, and one thin `GenerateText` application
-service. See `.agents/architecture.md` §2d for the
-`Episode data → [future] prompt assembly → GenerateText → resolver → provider →
-[future] vendor adapter` boundary. **Still no** real vendor call, prompt
-assembly from Episode/AiPersona data, STT/TTS, realtime broadcast, studio
-display, avatar/lip-sync, or conversation engine.
+**OpenAI adapter + Episode text rehearsal (TASK-0006).** Done so far: bootstrap,
+TASK-0001 core domain, TASK-0002 static-analysis baseline, TASK-0003 Filament
+admin, TASK-0004 episode preparation workspace, TASK-0005 vendor-neutral
+text-generation foundation (`app/AI/**`). TASK-0006 adds the **first real AI
+interaction** on top of that foundation: a real **OpenAI Chat Completions
+adapter** behind `TextGenerationProvider` (env-gated — logical keys stay
+vendor-neutral; credentials only from env), a **prompt-assembly service**
+(`AssembleRehearsalPrompt`) that builds a request from existing Episode /
+AiPersona / topic / question data, and a Filament **"AI Provası"** page
+(`RehearseEpisode`) on the Episode preparation workflow that generates and
+displays one persona response. See `.agents/architecture.md` §2e.
+**Rehearsal only** — nothing is persisted; **still no** conversation history,
+live-session runtime, STT/TTS, realtime broadcast, studio display, avatar/
+lip-sync, or conversation engine.
 
 ## Environment facts
 
@@ -92,3 +93,6 @@ display, avatar/lip-sync, or conversation engine.
 - Local dev DB: SQLite (`database/database.sqlite`).
 - Quality gates: `vendor/bin/pint --test` · `php artisan test` · `composer stan`
   (PHPStan/Larastan level 6). No automated external review.
+- AI text driver: unset ⇒ deterministic `fake` (local / CI / tests). Production
+  sets `AI_TEXT_DRIVER=openai` + `OPENAI_API_KEY` (see `.env.example`); the key
+  lives only in the environment, never in source/DB.

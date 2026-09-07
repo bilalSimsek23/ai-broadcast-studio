@@ -1,8 +1,8 @@
 # Architecture — AI Broadcast Studio
 
-_Last updated: 2026-09-06 (TASK-0005 AI text provider foundation). Section 2 and
-its module split are the **target** shape; §§2a–2d record what is actually
-built._
+_Last updated: 2026-09-07 (TASK-0006 OpenAI adapter + Episode text rehearsal).
+Section 2 and its module split are the **target** shape; §§2a–2e record what is
+actually built._
 
 ## 1. Stack
 
@@ -72,9 +72,10 @@ for any non-null value outside its allow-list, so
 `null` is always allowed.
 
 **Follow-up:** the logical→vendor **text** resolver landed in TASK-0005
-(`config('ai.text')` + `app/AI/**`, see §2d). Still to come: real vendor
-adapters behind the contract, and the analogous `voice` resolver for
-`voice_provider` / `voice_id`.
+(`config('ai.text')` + `app/AI/**`, see §2d); the first real adapter — OpenAI
+Chat Completions — landed in TASK-0006 (see §2e), env-gated so logical keys stay
+vendor-neutral. Still to come: other text vendors, and the analogous `voice`
+resolver for `voice_provider` / `voice_id`.
 
 **Deletion policy (deliberate)**
 
@@ -134,13 +135,13 @@ or the deletion policy. Invariants live in the models/DB; the UI mirrors them:
   "Arşivle" action sets `status = *::Archived`. The DB RESTRICT constraints
   are untouched.
 
-**AI vendor integration is still NOT implemented.** As of TASK-0005 the
-vendor-neutral *text* foundation exists — the `TextGenerationProvider` contract,
-neutral DTOs, `config('ai.text')`, the `LogicalModelResolver`, `GenerateText`,
-and a deterministic `FakeTextProvider` (see §2d). Still missing: any **real
-vendor adapter**, the analogous voice (STT/TTS) resolver, realtime, studio
-display, prompt assembly, and the conversation engine. Persona binding columns
-still hold logical keys only.
+**AI text generation is a rehearsal tool, not the broadcast runtime.** As of
+TASK-0006: the vendor-neutral *text* foundation (§2d), a **real OpenAI adapter**
+behind the contract, a rehearsal **prompt-assembly** service, and a Filament
+**"AI Provası"** page that generates one persona response from an Episode's
+editorial data (§2e). Still missing: other vendor adapters, the analogous voice
+(STT/TTS) resolver, realtime, studio display, conversation history, and the live
+conversation engine. Persona binding columns still hold logical keys only.
 
 **Not yet built:** everything in the bullet above, plus a public/viewer web
 app, queue workers config, CI.
@@ -236,10 +237,11 @@ Plus the human **presenter brief** on the Episode
 All preparation fields are **separate nullable columns** (not one JSON blob):
 queryable, simple per-field validation, clean for future prompt assembly / API.
 
-**Still NOT built:** prompt assembly, any AI/LLM call, STT/TTS, live broadcast
-engine, studio display, avatar/lip-sync. Live/Completed status transitions are
-out of scope. (The vendor-neutral text *foundation* — contract, DTOs, resolver,
-fake — landed in TASK-0005, §2d; it makes no vendor call.)
+**Still NOT built:** STT/TTS, live broadcast engine, studio display,
+avatar/lip-sync, conversation history. Live/Completed status transitions are out
+of scope. (The vendor-neutral text *foundation* landed in TASK-0005, §2d;
+rehearsal prompt assembly + a real OpenAI adapter + the "AI Provası" page landed
+in TASK-0006, §2e — a rehearsal tool, still no live-session runtime.)
 
 ## 2d. AI text generation foundation — as built (TASK-0005)
 
@@ -294,16 +296,67 @@ non-finite (`NAN` / `INF`) temperatures.
 **`config('ai.text')`** — `providers` (logical provider key → `driver`;
 superset of `ai.persona.ai_provider`), `models` (logical model key → provider +
 vendor model id + default `parameters`; keys align with `ai.persona.ai_model`
-plus `host_rebuttal`), `drivers` (driver key → class; only `fake` today),
-`connections` (per-driver; empty — real credentials via `env()` in
-`config/ai.php` only, added with the first real adapter). The persona
-logical-key invariant (TASK-0001, §2a) is unchanged: a persona still validates
-against `config('ai.persona.*')`, not against this section.
+plus `host_rebuttal`), `drivers` (driver key → class), `connections`
+(per-driver credentials/transport via `env()` in `config/ai.php` only).
+As of TASK-0006 (§2e): `drivers` = `fake` + `openai`; the provider `driver`s and
+vendor model ids are `env()`-gated (`AI_TEXT_DRIVER`, `AI_TEXT_MODEL_*`) with the
+`fake` values as the default, so an unset environment (local / CI / tests) is
+100% deterministic and `AI_TEXT_DRIVER=openai` routes the same logical keys
+through the real adapter. The persona logical-key invariant (TASK-0001, §2a) is
+unchanged: a persona still validates against `config('ai.persona.*')`, never
+against this section, and still cannot store a vendor name.
 
 **`GenerateText`** — the one thin entry point: resolve → merge overrides over
 configured defaults → call the provider → return its neutral response
-unchanged. Knows nothing about Filament, and nothing yet about Episode,
-AiPersona, readiness, or prompt assembly.
+unchanged. Knows nothing about Filament, Episode, AiPersona, or readiness.
+
+## 2e. OpenAI adapter + Episode text rehearsal — as built (TASK-0006)
+
+The first real AI interaction, on top of §2d. A **rehearsal tool** — no
+persistence, no live-session runtime, no STT/TTS/audio/avatar/WebSocket/
+streaming.
+
+```
+Episode editorial data ─▶ AssembleRehearsalPrompt.assemble()  (app/AI/Prompting)
+                            → TextGenerationRequest (logical model key)
+                              → GenerateText → LogicalModelResolver
+                                → OpenAiTextProvider  (app/AI/Providers/OpenAi)
+                                  → Http (Chat Completions, connect+read timeout, retry(2), no stream)
+Filament "AI Provası" page (RehearseEpisode) orchestrates the above; renders one response; persists nothing.
+```
+
+**`OpenAiTextProvider`** — implements `TextGenerationProvider`; the only place
+the OpenAI HTTP shape lives. Credentials come only from
+`config('ai.text.connections.openai')` (env-sourced) via an `AiServiceProvider`
+singleton — never a constructor literal, never persisted, never logged/echoed/
+in an exception. Vendor error translation (new `App\AI\Exceptions`):
+`ProviderException` (base — missing key fails before any send; unintelligible
+2xx body), `ProviderTimeoutException` (connection/read failure; message names
+only the timeout seconds), `ProviderRequestException` (non-2xx; carries only
+HTTP `status` + short enum-like `type`/`code` — vendor free-text and raw bodies
+are dropped). A raw Guzzle/HTTP exception or vendor payload never escapes
+`generate()`.
+
+**`AssembleRehearsalPrompt`** — builds the `TextGenerationRequest` from
+Show/Episode context, episode broadcast instructions, persona identity +
+expertise/personality/speaking-style + `system_prompt`, per-episode line-up
+instructions, the episode AI brief (objective, tone override, must-cover, avoid,
+response-length guidance), and the optionally-selected topic/question context;
+blank fields are skipped; the presenter question is the single user message.
+Logical model key = `persona->ai_model` or `default`. Names no vendor, reads no
+config, makes no call. Presenter question + editorial free-text are untrusted
+(a closing `GÖREV` directive: the question cannot override the brief).
+
+**`RehearseEpisode`** — Filament resource page, route
+`episodes/{record}/rehearse`, from a "AI Provası" header action on
+`PrepareEpisode`. Persona Select options are computed server-side from **this
+episode's line-up only**; topic/question Selects are episode/topic-scoped; the
+presenter question auto-fills from a selected question but stays editable.
+`generate()` re-scopes every selection against the episode, assembles, calls
+`GenerateText`, and renders the response with a logical-model/finish-reason/
+token footnote. `ProviderException | AiConfigurationException` → `report()` + a
+generic Turkish danger notification (no credentials, no raw vendor error).
+Double-submit guarded via `wire:target` + `wire:loading.attr="disabled"`.
 
 ## 3. Key boundaries
 
@@ -316,17 +369,17 @@ Domain code ──▶ GenerateText ──▶ LogicalModelResolver ──▶ Text
                                                    (app/AI/Providers/Fake)   (app/AI/Providers/<Vendor>)
 ```
 
-- **Built (TASK-0005, §2d):** the interface, the neutral DTOs, `config('ai.text')`,
-  the `LogicalModelResolver`, `GenerateText`, and the deterministic
-  `FakeTextProvider`. `config/ai.php` maps logical names
-  (`default`, `fast`, `host_rebuttal`, …) → provider + vendor model id + params.
-  Characters store a **logical name**, never a vendor.
-- **Not built yet:** a real vendor adapter; the network-error hierarchy
-  (`ProviderException`, `ProviderTimeoutException`, `ProviderRateLimitException`,
-  `ProviderContentFilteredException`) that adapters will translate vendor errors
-  into; a `Routing\ProviderCoordinator` in front of the interface for fallback /
-  circuit breaking / per-session / per-character budgets (done once, not per
-  call site); prompt assembly from Episode/AiPersona data.
+- **Built (TASK-0005 §2d, TASK-0006 §2e):** the interface, neutral DTOs,
+  `config('ai.text')`, the `LogicalModelResolver`, `GenerateText`, the
+  deterministic `FakeTextProvider`, a real `OpenAiTextProvider` (env-gated), the
+  `ProviderException` / `ProviderTimeoutException` / `ProviderRequestException`
+  translation hierarchy, `AssembleRehearsalPrompt`, and the "AI Provası"
+  rehearsal page. Characters store a **logical name**, never a vendor.
+- **Not built yet:** other vendor adapters; `ProviderRateLimitException` /
+  `ProviderContentFilteredException` (429/filter are `ProviderRequestException`
+  cases today); a `Routing\ProviderCoordinator` in front of the interface for
+  fallback / circuit breaking / per-session / per-character budgets (done once,
+  not per call site); conversation history and the live conversation engine.
 
 ### Session lifecycle
 

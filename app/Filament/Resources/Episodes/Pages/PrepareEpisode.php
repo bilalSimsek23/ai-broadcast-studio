@@ -96,6 +96,12 @@ class PrepareEpisode extends EditRecord
                         ->send();
                 }),
 
+            Action::make('rehearse')
+                ->label('AI Provası')
+                ->icon(Heroicon::OutlinedSparkles)
+                ->color('gray')
+                ->url(fn (): string => EpisodeResource::getUrl('rehearse', ['record' => $this->episode()])),
+
             Action::make('normalEdit')
                 ->label('Ayrıntılı düzenleme')
                 ->icon(Heroicon::OutlinedPencilSquare)

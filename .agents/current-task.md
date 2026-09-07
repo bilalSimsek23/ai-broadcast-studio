@@ -1,81 +1,109 @@
-<!-- task-id: TASK-0002 -->
+<!-- task-id: TASK-0005 -->
 # Current task
 
-> Completed: **bootstrap** (`APPROVED_WITH_NOTES`) · **TASK-0001 core domain
-> foundation** (`APPROVED`, 0 findings). Both archived under `.agents/reviews/`.
+> Completed: bootstrap · TASK-0001 core domain · TASK-0002 static analysis ·
+> TASK-0003 Filament core administration · TASK-0004 episode preparation
+> workspace · TASK-0005 AI text provider foundation.
 
-## TASK-0002 — STATIC ANALYSIS BASELINE
+## TASK-0005 — AI TEXT PROVIDER FOUNDATION
 
-**Status:** ✅ COMPLETE — GPT verdict `APPROVED_WITH_NOTES`, 0 blocking findings,
-1 non-blocking doc note (fixed post-verdict). 1 review round.
-(`.agents/reviews/2026-09-06T17-25-09-629Z-APPROVED_WITH_NOTES.json`)
-**Owner:** CLAUDE (implementation) · GPT (review)
-**Scope:** tooling only — PHPStan/Larastan baseline + review-workflow
-integration + per-task round counter. **No** `app/AI/Contracts`, provider
-impls, `FakeTextProvider`, resolver, STT/TTS, Filament, studio UI, or new
-domain models.
+**Status:** COMPLETE — all quality gates pass; no open issues.
+**Scope:** the vendor-neutral text-generation foundation — contracts, neutral
+DTOs, a logical provider/model resolver, a deterministic fake provider, and one
+thin application service. **No** real OpenAI/Anthropic calls, STT/TTS,
+streaming, conversation history, rehearsal UI, studio runtime, or prompt
+assembly from Episode/AiPersona data.
 
-### Delivered
+### Delivered (`app/AI/**`, framework-agnostic except the service provider)
 
-**PHPStan / Larastan**
-- `larastan/larastan:^3.0` (resolves `v3.11.0` + `phpstan/phpstan 2.2.x`) as a
-  dev dependency (compatible with Laravel 13 / PHP 8.4).
-- `phpstan.neon` at **level 6**, `includes` the Larastan extension.
-- Analysis scope: `app/`, `config/`, `database/factories/`,
-  `database/seeders/`, `routes/`. **Migrations excluded** (one-shot declarative
-  schema DSL; poor noise/benefit ratio) — documented in the neon file.
-- `vendor/bin/phpstan analyse` runs **clean at level 6** — **no baseline
-  file**, **no broad ignores**. `reportUnmatchedIgnoredErrors: true`.
-- `composer stan` (= `phpstan analyse --memory-limit=512M`) as the one-command
-  developer gate (the default 128M PHP CLI limit is not enough for Larastan).
+**Contract** — `Contracts/TextGenerationProvider`:
+`generate(ResolvedTextGenerationRequest): TextGenerationResponse`. Vendor SDK
+classes / vendor request-response shapes never cross this boundary.
 
-**Existing-code typing fixes (no behaviour change)**
-- `AiPersona::episodes()` / `Episode::aiPersonas()` PHPDoc: completed the
-  `BelongsToMany<Related, $this, EpisodeAiPersona, 'pivot'>` template params
-  to match the custom `->using()` pivot. Schema, domain semantics, deletion
-  policy, enum behaviour and vendor-neutrality rules are unchanged.
+**Neutral DTOs** (`Dtos/**`, all `final readonly`) + enums (`Enums/**`):
+- `Enums/Role` (`system` · `user` · `assistant`), `Enums/FinishReason`
+  (`stop` · `length` · `content_filter` · `other`).
+- `Message` (role + non-empty content), `MessageList` (ordered, non-empty).
+- `GenerationParameters` — the small surface: `temperature` (0.0–2.0),
+  `maxOutputTokens` (1–100000). Type/range validated centrally in the ctor and
+  in `fromArray()` (unknown keys rejected; non-finite `temperature` rejected).
+  `mergedWith()` defines precedence: a non-null caller override wins
+  field-by-field over the logical-model default.
+- `TextGenerationRequest` — application-facing: **logical** model key +
+  `MessageList` + optional system instructions + optional parameter overrides.
+- `ResolvedTextGenerationRequest` — provider-facing: resolved **vendor** model
+  id + logical keys (telemetry only) + messages + merged parameters + system.
+- `TokenUsage` (`inputTokens?` / `outputTokens?` / `totalTokens()`), neutral
+  array keys `input_tokens` / `output_tokens` / `total_tokens`; no billing.
+- `ResponseMetadata` (`logicalProvider`, `logicalModel`, `providerModelId?`
+  [diagnostic only], `finishReason?`), `TextGenerationResponse` (text +
+  metadata + usage).
 
-**Review workflow**
-- `.agents/scripts/review.sh`: gates reordered to the ideal sequence
-  (1 harness self-tests → 2 Pint → 3 `php artisan test` → 4 PHPStan level 6)
-  and made **fail-closed** — any failed/missing gate aborts with exit 1 and
-  the GPT review is **not** run. PHPStan runs with `--memory-limit=512M`.
-- The captured `.agents/last-test-run.txt` (command + exit + concise result
-  per gate) is what the reviewer sees; on a clean run PHPStan's section is
-  just `[OK] No errors`, so no analyzer-output bloat reaches GPT context.
+**Resolver / registry** — `Resolution/LogicalModelResolver` (container
+singleton, **framework-agnostic** — `AiServiceProvider` hands it a plain
+`ai.text` array + a driver-factory closure): `provider(key)` →
+`TextGenerationProvider`; `model(key)` → `ResolvedTextModel` (provider +
+logical keys + vendor model id + default params). Never falls back silently —
+`UnknownProviderKey` / `UnknownModelKey` for an unregistered key,
+`InvalidTextConfiguration` for a structurally broken / blank binding (blank =
+`trim() === ''`).
 
-**Round counter (per-task aware)**
-- `gpt-review.mjs` now tags every archived verdict with `task` = the active id
-  from `.agents/current-task.md` (`<!-- task-id: TASK-xxxx -->` marker, else
-  first `# TASK-xxxx` heading, else `null`).
-- New `.agents/scripts/lib/loop-status.mjs` (`currentTaskId`,
-  `taskRoundSummary`) + rewritten `review-loop-status.mjs` count **only the
-  current task's rounds**; legacy/untagged archives (bootstrap, TASK-0001) are
-  excluded. Budget warnings (>5 / >10) fire on the task-scoped count. Old
-  archive files without `task` don't break the script.
+**Fake provider** — `Providers/Fake/FakeTextProvider` (application namespace,
+container singleton): implements the contract, no network, deterministic
+(default = fixed echo derived only from the request; or scripted via
+`respondWith()` / `queueResponse()` / `reportUsage()`), records every call
+(`calls()` / `lastCall()` / `callCount()`).
+
+**Application service** — `GenerateText` (thin): logical model key → resolve →
+merge overrides over defaults → call provider → return its neutral response
+unchanged. No Filament; no Episode / AiPersona / readiness / prompt assembly.
+
+**Exceptions** — `Exceptions/**`: `AiConfigurationException` (base),
+`UnknownProviderKey`, `UnknownModelKey`, `InvalidTextConfiguration`,
+`InvalidGenerationParameters`, plus a `SafeIdentifier` formatter. Messages
+**never echo a caller-supplied key** (it could be a pasted credential) nor a
+raw config value; `InvalidTextConfiguration` names only the logical key whose
+binding is broken (already proven to exist in config) via `SafeIdentifier`.
+
+**Config** — `config/ai.php` gains a `text` section: `providers` (logical
+provider key → driver; superset of `ai.persona.ai_provider`), `models` (logical
+model key → provider + vendor model id + default params; keys match
+`ai.persona.ai_model` plus `host_rebuttal`), `drivers` (driver → class; only
+`fake` today), `connections` (per-driver, empty; credentials via `env()` in
+this file only, later). `bootstrap/providers.php` registers `AiServiceProvider`.
+
+**Boundary (documented in architecture §2d):**
+`Episode editorial data → [future] prompt assembly → GenerateText → LogicalModelResolver → TextGenerationProvider → [future] vendor adapter`.
+TASK-0005 does **not** assemble Episode/AiPersona prompts and makes no vendor call.
+
+### Tests — `tests/Unit/AI/**` (pure) + `tests/Feature/AI/**` (container/config)
+
+`GenerationParameters` (ranges, non-finite, `fromArray`, merge precedence) ·
+`Message` / `MessageList` (non-empty, order) · `TokenUsage` (neutral keys,
+total) · `SafeIdentifier` (redaction) · `LogicalModelResolver` (provider +
+model resolution, unknown provider/model, malformed / blank config,
+driver-not-a-provider, persona keys all resolve, no key echoed) ·
+`FakeTextProvider` (implements contract, deterministic, records, scriptable) ·
+`GenerateText` (routes to the bound provider via a second recording provider,
+system+messages pass through unchanged, defaults applied, override precedence,
+invalid params rejected pre-call, neutral response returned, neutral usage,
+fake path needs no credentials) · AiPersona logical-key invariant intact after
+the config expansion. Whole suite: **164 tests / 535 assertions passing.**
 
 ### Acceptance checklist
 
-- [x] PHPStan/Larastan installed, level 6 active
-- [x] `vendor/bin/phpstan analyse` clean, no broad baseline/ignore
-- [x] Existing domain behaviour unchanged (typing/PHPDoc only)
-- [x] `review.sh` runs the PHPStan gate, fail-closed
-- [x] Analysis result provided to GPT (command + exit + summary in capture)
-- [x] Round counter is current-task aware
-- [x] `node --test .agents/scripts/*.test.mjs` passing
-- [x] `vendor/bin/pint --test` passing
-- [x] `php artisan test` passing
-- [x] GPT verdict `APPROVED_WITH_NOTES`
-- [x] No unresolved blocking finding
-
-### Resolved after the verdict (non-blocking doc note)
-
-- `.agents/architecture.md` §2a said the logical→vendor resolver follow-up was
-  "TASK-0002"; corrected to **TASK-0003** (and removed a stale "(TASK-0002)"
-  from the §1 static-analysis row). Docs only — no code / gate impact, so no
-  re-review.
+- [x] Vendor-neutral contract + neutral request/response DTOs
+- [x] Logical provider/model resolver; unknown/malformed keys fail explicitly
+- [x] Deterministic fake provider (no network, records input, configurable)
+- [x] One thin `GenerateText` service; no Filament / Episode / AiPersona / prompt assembly
+- [x] Small validated parameter surface; documented override-vs-default precedence
+- [x] Safe exception hierarchy; no secrets in messages
+- [x] `env()` only in `config/ai.php`; no secrets in DB
+- [x] AiPersona logical-key invariant still valid; existing stored keys resolve
+- [x] Pint · Laravel tests (164 / 535 assertions) · PHPStan level 6 (0, no baseline)
 
 ### Next task (draft, not started)
 
-**TASK-0003** — `app/AI/Contracts` (`TextGenerationProvider` + neutral DTOs) +
-`FakeTextProvider` + the full `config/ai.php` logical→vendor resolver.
+**TASK-0006** — first real vendor adapter behind `TextGenerationProvider`
+(`app/AI/Providers/<Vendor>/`, `Http` client with timeout/retry, vendor→neutral
+error translation) wired via a new `config('ai.text.drivers')` entry.

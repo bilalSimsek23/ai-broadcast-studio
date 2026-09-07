@@ -1,7 +1,7 @@
 # Architecture — AI Broadcast Studio
 
-_Last updated: 2026-09-06 (TASK-0001 core domain foundation). Sections 2 and
-its module split are the **target** shape; §4a below records what is actually
+_Last updated: 2026-09-06 (TASK-0005 AI text provider foundation). Section 2 and
+its module split are the **target** shape; §§2a–2d record what is actually
 built._
 
 ## 1. Stack
@@ -16,7 +16,6 @@ built._
 | Style | Laravel Pint (PSR-12) | `vendor/bin/pint` |
 | Static analysis | PHPStan + Larastan | **level 6**, `phpstan.neon`; `composer stan`; no baseline; ratchet up in a later task |
 | Tests | PHPUnit (Laravel default) | `php artisan test` |
-| Review | `gpt-5.6-sol` via `.agents/scripts/gpt-review.mjs` | **exists** |
 
 ## 2. Domain module layout (target)
 
@@ -72,8 +71,10 @@ for any non-null value outside its allow-list, so
 `AiPersona::create(['ai_provider' => 'openai'])` fails and persists nothing.
 `null` is always allowed.
 
-**Follow-up (TASK-0003):** grow `config/ai.php` into the full logical→vendor
-resolver (provider + model + params, credentials via `env()` there only).
+**Follow-up:** the logical→vendor **text** resolver landed in TASK-0005
+(`config('ai.text')` + `app/AI/**`, see §2d). Still to come: real vendor
+adapters behind the contract, and the analogous `voice` resolver for
+`voice_provider` / `voice_id`.
 
 **Deletion policy (deliberate)**
 
@@ -103,30 +104,229 @@ attribute (never `$guarded=[]`); `casts()` method for enums, `array`
 auto-generated and used as the route key via `HasUuid`;
 `Model::preventLazyLoading()` outside production (`AppServiceProvider`).
 
-**Not in this task:** AI/STT/TTS integration, realtime broadcast, studio UI,
-avatar/lip-sync, Filament admin, controllers/routes, policies, PHPStan.
+## 2b. Admin UI — as built (TASK-0003)
+
+**Filament v5** panel at `/admin` (`app/Providers/Filament/AdminPanelProvider.php`,
+`app/Filament/**`). The admin UI is **only a management surface** over the
+TASK-0001 domain models — it does not own domain logic, validation semantics,
+or the deletion policy. Invariants live in the models/DB; the UI mirrors them:
+
+- **Access:** `users.is_admin` boolean; `User implements FilamentUser` →
+  `canAccessPanel()` = `is_admin`. Guests → panel login; non-admins → 403.
+  No RBAC package.
+- **Resources:** `ShowResource`, `AiPersonaResource`, `EpisodeResource`
+  (nav group "Yayın Yönetimi"); `EpisodeTopicResource` is nav-hidden and
+  reached only from an Episode. Class names English; UI labels Turkish.
+- **Nested data** via relation managers (not deep nested forms):
+  Episode → AiPersonas (pivot `sort_order` + `episode_instructions`),
+  Episode → Topics, EpisodeTopic → Questions. Ordering via drag-reorder on
+  the `sort_order` columns.
+- **Vendor neutrality:** the `ai_provider` / `ai_model` / `voice_provider` /
+  `voice_id` form fields are Selects populated from `config('ai.persona.*')`,
+  so the UI cannot submit a vendor name. The `AiPersona` saving-hook
+  (TASK-0001) remains the authoritative guard.
+- **`screen_settings`** is edited as structured fields
+  (`display_name`, `display_title`, `avatar_position`, `avatar_size`,
+  `lower_third_enabled`) mapped onto the JSON column — no raw-JSON textarea.
+- **Delete/archive:** `App\Filament\Support\AdminActions` — the delete row
+  action is hidden while a record is FK-protected (Show with episodes,
+  AiPersona in a line-up) and a `before` hook re-checks and notifies; an
+  "Arşivle" action sets `status = *::Archived`. The DB RESTRICT constraints
+  are untouched.
+
+**AI vendor integration is still NOT implemented.** As of TASK-0005 the
+vendor-neutral *text* foundation exists — the `TextGenerationProvider` contract,
+neutral DTOs, `config('ai.text')`, the `LogicalModelResolver`, `GenerateText`,
+and a deterministic `FakeTextProvider` (see §2d). Still missing: any **real
+vendor adapter**, the analogous voice (STT/TTS) resolver, realtime, studio
+display, prompt assembly, and the conversation engine. Persona binding columns
+still hold logical keys only.
+
+**Not yet built:** everything in the bullet above, plus a public/viewer web
+app, queue workers config, CI.
+
+## 2c. Episode preparation — as built (TASK-0004)
+
+The editorial workspace for preparing a weekly episode before broadcast.
+
+**Application layer** (`app/Application/Episodes/`, framework-agnostic — no
+Filament, no HTTP):
+
+- `Readiness/ReadinessCheck` — a `readonly` value object: `key`, `label`,
+  `passed`, `blocking`, `hint`.
+- `Readiness/EpisodeReadiness` — `readonly` VO over a list of checks:
+  `isReady()`, `checks()`, `blockingIssues()`, `toArray()` →
+  `{is_ready, checks[], blocking_issues[]}`.
+- `Readiness/AssessEpisodeReadiness` — `__invoke(Episode): EpisodeReadiness`.
+  The **single source of truth** for "is this episode ready to broadcast?":
+  show assigned · title · main_topic · broadcast_at · ≥1 AI persona · ≥1 topic
+  · ≥1 question · AI brief (objective + must-cover points) — whitespace-only
+  does not count.
+- `MakeEpisodeReady` — `__invoke(Episode): EpisodeReadiness`. The **only**
+  supported writer of `status → Ready`. Runs in a `DB::transaction`, re-reads
+  the row with `lockForUpdate()`, rejects a non-preparable source state up
+  front — independent of readiness — with
+  `App\Exceptions\InvalidEpisodeTransition`, then `lockForUpdate()`s the
+  readiness **witness rows** (line-up, topics, per-topic questions) so a
+  concurrent relation-manager delete of the last one blocks behind this
+  transition rather than committing between the check and the write. It then
+  assesses that fresh instance and transitions only when every blocking check
+  passes. The transition itself is a **query-builder `update()`** (fires no
+  model events, so it is the one write the model hooks below let through)
+  reached only after the locked checks. All locks are held across the check
+  and the write. Already-`Ready` is idempotent (no throw, no write). The
+  caller's instance is synced to the persisted state. Returns the assessment;
+  no exception for the ordinary "not ready yet" case.
+  **DB-engine note:** dev/test run SQLite, which serializes all writes
+  globally and treats `FOR UPDATE` as a no-op, so the assess→write gap does
+  not exist there and the automated suite exercises the logic sequentially.
+  The row locks are what protect Postgres/MySQL and **must be verified with a
+  two-connection test against the real engine before production release**. A
+  readiness-affecting edit made *after* a committed Ready transition is the
+  operator's responsibility — the status is not auto-downgraded (reverting
+  Ready/Live/Completed is out of scope for TASK-0004).
+- `DuplicateEpisode` — start next week from an existing episode. Copies:
+  show, AI line-up (personas + order + `episode_instructions`), optionally
+  `broadcast_instructions`. **Never** copies: status (→ Draft), broadcast_at,
+  episode_number, main_topic, purpose, the briefs, topics/questions, any
+  session history.
+
+**Ready-transition invariant** (defense in depth): `Ready` is a **guarded
+status**. `Episode::booted()` registers `creating` **and** `updating` hooks
+that refuse *every* event-driven write of `status = Ready` — a model
+`save()` / `update()`, or `create()` — with
+`App\Exceptions\InvalidEpisodeTransition::unauthorizedReadyWrite()`, writing
+nothing, whatever the caller (Filament form, tinker, a future API, other
+application code). There is **no public authorization switch** to flip. The
+one path that reaches `Ready` is `MakeEpisodeReady`'s query-builder `update()`
+— events don't fire for it, and it only runs inside that service's row-locked
+transaction after the lifecycle + readiness checks, which is what makes the
+transition atomic (a pre-update observer check on an unlocked row could be
+split by a concurrent Live/Archived commit). Fixtures that need a `Ready` row
+(`EpisodeFactory::scheduled()`) reach it with an explicit event-free write
+after creation. The Filament status Select also does not offer `Ready`; the
+path is **Program Hazırlığı → "Yayına Hazırla"** (`MakeEpisodeReady`).
+
+**Filament** (`app/Filament/Resources/Episodes/Pages/PrepareEpisode.php`,
+extends `EditRecord`, route `/admin/episodes/{uuid}/prepare`): a curated
+single-screen workspace — summary + purpose + broadcast instructions +
+presenter brief + AI brief form, a live **readiness panel** and a read-only
+**summary panel** (Blade partials calling the application services), the
+existing AI-line-up and Topics **relation managers** (reliable, not deeply
+nested forms), and header actions "Yayına Hazırla" / "Ayrıntılı düzenleme".
+The readiness panel is **form-state aware**: the readiness scalar fields are
+`live(onBlur: true)` and the panel assesses a candidate built from the current
+(possibly unsaved) form values, so it reflects edits before Save. "Yayına
+Hazırla" **persists the form first** (`$this->save(...)`, which also validates
+it) and then calls `MakeEpisodeReady`, catching `InvalidEpisodeTransition`
+into an operator notification. The Episode list has a "Yeni bölüm oluştur
+(kopyala)" action (`DuplicateEpisode`).
+
+**Four distinct editorial concerns — do not conflate:**
+
+| Belongs to | Field(s) | Purpose |
+|---|---|---|
+| **AiPersona** (persistent identity) | `system_prompt`, `personality`, … | The character, week-independent. Never episode-specific. |
+| **Episode** (this episode's AI brief) | `ai_objective`, `ai_tone_override`, `must_cover_points`, `avoid_points`, `response_length_guidance` | How the AI voices should approach *this* broadcast. Consumed later by runtime prompt assembly (not built). |
+| **EpisodeTopic** | `ai_context` | AI context for *one debate topic*. |
+| **EpisodeAiPersona** (line-up pivot) | `episode_instructions` | Notes for *one persona in one episode*. |
+
+Plus the human **presenter brief** on the Episode
+(`opening_notes`, `key_points`, `questions_to_push`, `closing_notes`).
+All preparation fields are **separate nullable columns** (not one JSON blob):
+queryable, simple per-field validation, clean for future prompt assembly / API.
+
+**Still NOT built:** prompt assembly, any AI/LLM call, STT/TTS, live broadcast
+engine, studio display, avatar/lip-sync. Live/Completed status transitions are
+out of scope. (The vendor-neutral text *foundation* — contract, DTOs, resolver,
+fake — landed in TASK-0005, §2d; it makes no vendor call.)
+
+## 2d. AI text generation foundation — as built (TASK-0005)
+
+The vendor-neutral base the future rehearsal / studio conversation features
+call into. **No vendor SDK, no network, no prompt assembly** — those are later
+tasks. Everything lives in `app/AI/**` and is framework-agnostic apart from
+`AiServiceProvider`.
+
+**The boundary (each arrow = "calls"):**
+
+```
+Episode editorial data (ai_objective, topics, briefs, persona notes …)
+  → [future] prompt assembly            ← NOT in TASK-0005
+    → App\AI\GenerateText               thin application service
+      → App\AI\Resolution\LogicalModelResolver   logical key → provider + vendor model id + defaults
+        → App\AI\Contracts\TextGenerationProvider
+          ├─ App\AI\Providers\Fake\FakeTextProvider     (today; deterministic, no network)
+          └─ App\AI\Providers\<Vendor>\…                ← NOT in TASK-0005 (real adapter)
+```
+
+**Contract** — `Contracts/TextGenerationProvider::generate(ResolvedTextGenerationRequest): TextGenerationResponse`.
+A vendor SDK class or vendor-shaped payload never crosses this line. Network
+concerns (timeout/retry/rate-limit) and their exception hierarchy belong to the
+future real adapters, deliberately not in this contract yet.
+
+**Neutral DTOs** (`Dtos/**`, `final readonly`) + enums (`Enums/{Role,FinishReason}`):
+`Message` / `MessageList` (ordered, non-empty), `GenerationParameters`
+(small surface — `temperature`, `maxOutputTokens` — validated centrally; unknown
+keys rejected; `mergedWith()` = caller override wins field-by-field over the
+logical-model default), `TextGenerationRequest` (application-facing, **logical**
+model key), `ResolvedTextGenerationRequest` (provider-facing, resolved **vendor**
+model id; carries the logical keys only for telemetry), `TokenUsage`
+(vendor-neutral counts, keys `input_tokens` / `output_tokens` / `total_tokens`,
+no billing), `ResponseMetadata` (`logicalProvider` / `logicalModel` are what the
+app logs/branches on; `providerModelId` is diagnostic-only and never a logical
+key or a domain-model value), `TextGenerationResponse`.
+
+**Resolver** — `Resolution/LogicalModelResolver` (container singleton) is
+**framework-agnostic**: `AiServiceProvider` (the one Laravel-aware file in
+`app/AI/**`) hands it a plain `ai.text` config array and a
+`Closure(string): object` driver factory; the resolver imports no Illuminate
+class. `provider(key)` and `model(key)` **never fall back silently**:
+`UnknownProviderKey` / `UnknownModelKey` for an unregistered key,
+`InvalidTextConfiguration` for a structurally broken / blank binding
+(`trim() === ''`) or a driver class that is not a `TextGenerationProvider`.
+Exception messages **never echo a caller-supplied key** (it may be a pasted
+credential) or a raw config value — `InvalidTextConfiguration` names only the
+logical key whose binding is broken, and only after it is confirmed present in
+config, via the `SafeIdentifier` formatter. `GenerationParameters` also rejects
+non-finite (`NAN` / `INF`) temperatures.
+
+**`config('ai.text')`** — `providers` (logical provider key → `driver`;
+superset of `ai.persona.ai_provider`), `models` (logical model key → provider +
+vendor model id + default `parameters`; keys align with `ai.persona.ai_model`
+plus `host_rebuttal`), `drivers` (driver key → class; only `fake` today),
+`connections` (per-driver; empty — real credentials via `env()` in
+`config/ai.php` only, added with the first real adapter). The persona
+logical-key invariant (TASK-0001, §2a) is unchanged: a persona still validates
+against `config('ai.persona.*')`, not against this section.
+
+**`GenerateText`** — the one thin entry point: resolve → merge overrides over
+configured defaults → call the provider → return its neutral response
+unchanged. Knows nothing about Filament, and nothing yet about Episode,
+AiPersona, readiness, or prompt assembly.
 
 ## 3. Key boundaries
 
 ### AI provider abstraction (see CLAUDE.md §5)
 
 ```
-Domain code ──▶ TextGenerationProvider (interface, app/AI/Contracts)
-                     ▲                        ▲
-        OpenAiTextProvider            FakeTextProvider (default in testing)
-        (app/AI/Providers/OpenAi)     (app/AI/Providers/Fake)
+Domain code ──▶ GenerateText ──▶ LogicalModelResolver ──▶ TextGenerationProvider (interface, app/AI/Contracts)
+                                                               ▲                    ▲
+                                                   FakeTextProvider          <Vendor>TextProvider  (NOT built)
+                                                   (app/AI/Providers/Fake)   (app/AI/Providers/<Vendor>)
 ```
 
-- `config/ai.php` maps logical names (`default`, `fast`, `host_rebuttal`,
-  per-character) → provider + model + params. Characters store a **logical
-  name**, never a vendor.
-- Adapters translate vendor errors into `App\AI\Exceptions\*`
+- **Built (TASK-0005, §2d):** the interface, the neutral DTOs, `config('ai.text')`,
+  the `LogicalModelResolver`, `GenerateText`, and the deterministic
+  `FakeTextProvider`. `config/ai.php` maps logical names
+  (`default`, `fast`, `host_rebuttal`, …) → provider + vendor model id + params.
+  Characters store a **logical name**, never a vendor.
+- **Not built yet:** a real vendor adapter; the network-error hierarchy
   (`ProviderException`, `ProviderTimeoutException`, `ProviderRateLimitException`,
-  `ProviderContentFilteredException`). Raw vendor payloads/exceptions never
-  escape the adapter.
-- A `Routing\ProviderCoordinator` sits in front of the interface for fallback,
-  circuit breaking, and per-session / per-character budget enforcement — done
-  once, not per call site.
+  `ProviderContentFilteredException`) that adapters will translate vendor errors
+  into; a `Routing\ProviderCoordinator` in front of the interface for fallback /
+  circuit breaking / per-session / per-character budgets (done once, not per
+  call site); prompt assembly from Episode/AiPersona data.
 
 ### Session lifecycle
 
@@ -165,28 +365,14 @@ Domain code ──▶ TextGenerationProvider (interface, app/AI/Contracts)
   fixtures — never a live paid API in the normal suite.
 - Freeze time, seed randomness, assert ordering explicitly.
 
-## 6. Review workflow (exists)
+## 6. Quality gates
 
-Two agents: **CLAUDE** implements, **GPT** reviews. Loop and verdict contract
-are defined in `CLAUDE.md §7`. The reviewer receives only project-context,
-architecture, current-task, the git diff, changed-file bodies, and captured
-test results — never the whole repo.
+Claude is the sole implementation agent — there is no automated external
+reviewer. A task is done when all local gates pass:
 
-Files:
-
-- `.agents/scripts/gpt-review.mjs` — the reviewer (bounded context, secret-safe).
-- `.agents/scripts/lib/secret-scan.mjs` — content-based credential detector.
-- `.agents/scripts/lib/path-policy.mjs` — path allow/deny + binary detection.
-- `.agents/scripts/lib/verdict.mjs` — 3-verdict model, severity vs blocking, normalization.
-- `.agents/scripts/lib/findings.mjs` — finding fingerprint + round comparison.
-- `.agents/scripts/lib/loop-status.mjs` — `currentTaskId` + `taskRoundSummary` (per-task rounds).
-- `.agents/scripts/review-loop-status.mjs` — loop diagnosis (**current-task** round count, deltas, budget).
-- `.agents/scripts/gpt-review.test.mjs` — `node --test` self-tests.
-- `.agents/scripts/review.sh` — gates (self-tests → Pint → tests → PHPStan L6), **fail-closed** → reviewer → loop status.
-- `phpstan.neon` (repo root) — PHPStan/Larastan level 6 config.
-- `.agents/reviews/` — timestamped archive of every verdict (tagged with `task`).
-- `.agents/skills/antigravity-gpt-review/` — the portable skill this is derived
-  from, kept for reference/reuse.
+- `.agents/scripts/review.sh` — runs, in order, stopping at the first failure:
+  `vendor/bin/pint --test` → `php artisan test` → `composer stan`.
+- `phpstan.neon` (repo root) — PHPStan/Larastan level 6 config, no baseline.
 
 ## 7. Open decisions (not blocking bootstrap)
 

@@ -57,7 +57,7 @@ _Not modelled yet (later tasks):_
    is complete enough to replay the session.
 5. **Cost-bounded.** Per-session and per-character spend caps enforced before
    dispatching a paid call.
-6. **Secrets stay out of the repo and out of review input.**
+6. **Secrets stay out of the repo** — never in source, tests, fixtures or docs.
 7. **Untrusted text.** Host transcripts and operator free-text are untrusted
    input to prompts (prompt-injection aware).
 
@@ -72,14 +72,23 @@ _Not modelled yet (later tasks):_
 
 ## Current phase
 
-**Core domain foundation (TASK-0001).** Bootstrap is complete
-(`APPROVED_WITH_NOTES`). This phase adds only the base data model: 6 tables,
-3 status enums, factories, and tests. See `.agents/architecture.md` §2a and
-`.agents/current-task.md`. **Still no** AI integration, STT/TTS, realtime
-broadcast, studio UI, avatar/lip-sync, Filament admin, or HTTP layer.
+**AI text provider foundation (TASK-0005).** Done so far: bootstrap,
+TASK-0001 core domain, TASK-0002 static-analysis baseline,
+TASK-0003 Filament admin, TASK-0004 episode preparation workspace. TASK-0005
+adds the **vendor-neutral text-generation foundation** in `app/AI/**`: the
+`TextGenerationProvider` contract, neutral request/response DTOs, a
+`LogicalModelResolver` (logical provider/model key → provider + vendor model id
++ default params, driven by a new `config('ai.text')` section), a deterministic
+network-free `FakeTextProvider`, and one thin `GenerateText` application
+service. See `.agents/architecture.md` §2d for the
+`Episode data → [future] prompt assembly → GenerateText → resolver → provider →
+[future] vendor adapter` boundary. **Still no** real vendor call, prompt
+assembly from Episode/AiPersona data, STT/TTS, realtime broadcast, studio
+display, avatar/lip-sync, or conversation engine.
 
 ## Environment facts
 
-- PHP 8.4, Laravel 13.x, Composer 2.x, Node available for the review script.
+- PHP 8.4, Laravel 13.x, Composer 2.x.
 - Local dev DB: SQLite (`database/database.sqlite`).
-- Review model: `gpt-5.6-sol` by default (`OPENAI_REVIEW_MODEL` overrides).
+- Quality gates: `vendor/bin/pint --test` · `php artisan test` · `composer stan`
+  (PHPStan/Larastan level 6). No automated external review.

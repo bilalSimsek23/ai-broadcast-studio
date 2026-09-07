@@ -90,9 +90,15 @@ return [
             'fake' => [],
             'openai' => [
                 'api_key' => env('OPENAI_API_KEY'),
+                // Responses API base; the adapter appends `/responses`.
                 'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
                 'timeout' => (int) env('OPENAI_TEXT_TIMEOUT', 30),
                 'connect_timeout' => (int) env('OPENAI_TEXT_CONNECT_TIMEOUT', 10),
+                // GPT-5.x reasoning models reject any non-default `temperature`
+                // (HTTP 400 unsupported_value). Keep this false for that family;
+                // set OPENAI_TEXT_SEND_SAMPLING=true only for a GPT-4-class
+                // deployment that should honour the neutral `temperature`.
+                'send_sampling_params' => (bool) env('OPENAI_TEXT_SEND_SAMPLING', false),
             ],
         ],
     ],

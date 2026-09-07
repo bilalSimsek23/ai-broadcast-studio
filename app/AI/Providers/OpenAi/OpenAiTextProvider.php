@@ -19,9 +19,11 @@ use Illuminate\Support\Facades\Http;
 
 /**
  * The real OpenAI text-generation adapter — the ONLY place OpenAI's HTTP shape
- * (Chat Completions) is known. It receives a fully-resolved, vendor-neutral
- * request and returns a vendor-neutral response; every OpenAI-specific detail
- * (endpoint, payload keys, `choices`/`usage`/`finish_reason` layout, error
+ * is known. It targets the **Responses API** (`POST /v1/responses`), the
+ * current recommended surface for the GPT-5.x family. It receives a
+ * fully-resolved, vendor-neutral request and returns a vendor-neutral
+ * response; every OpenAI-specific detail (endpoint, `input`/`instructions`
+ * payload, `output[]` / `usage` layout, `status` / `incomplete_details`, error
  * envelope) stays inside this class.
  *
  * Contract with the rest of the app:
@@ -34,6 +36,12 @@ use Illuminate\Support\Facades\Http;
  *    {@see ProviderException} and its subtypes — a raw Guzzle/Laravel HTTP
  *    exception or raw vendor body never escapes this method;
  *  - no streaming (deferred).
+ *
+ * Sampling parameters: GPT-5.x reasoning models reject any non-default
+ * `temperature` with `HTTP 400 unsupported_value`. The neutral layer still
+ * carries `temperature` (it is meaningful for other model families), but this
+ * adapter only forwards it when the connection sets `send_sampling_params`
+ * — off by default, which is correct for the GPT-5.x family.
  */
 final class OpenAiTextProvider implements TextGenerationProvider
 {
@@ -42,6 +50,7 @@ final class OpenAiTextProvider implements TextGenerationProvider
         private readonly string $baseUrl,
         private readonly int $timeoutSeconds,
         private readonly int $connectTimeoutSeconds,
+        private readonly bool $sendSamplingParameters = false,
     ) {}
 
     public function generate(ResolvedTextGenerationRequest $request): TextGenerationResponse
@@ -57,6 +66,7 @@ final class OpenAiTextProvider implements TextGenerationProvider
                 status: $response->status(),
                 type: $this->shortErrorField($response, 'type'),
                 code: $this->shortErrorField($response, 'code'),
+                param: $this->shortErrorField($response, 'param'),
             );
         }
 
@@ -83,21 +93,31 @@ final class OpenAiTextProvider implements TextGenerationProvider
     }
 
     /**
+     * Map the neutral request onto the Responses API payload:
+     *  - system instructions  -> top-level `instructions`
+     *  - conversation turns    -> `input` (array of role/content items)
+     *  - maxOutputTokens       -> `max_output_tokens`
+     *  - temperature           -> `temperature` ONLY when the connection opts in
+     *
      * @return array<string, mixed>
      */
     private function payload(ResolvedTextGenerationRequest $request): array
     {
         $payload = [
             'model' => $request->vendorModelId,
-            'messages' => $this->messages($request),
+            'input' => $this->input($request),
         ];
 
-        if ($request->parameters->temperature !== null) {
-            $payload['temperature'] = $request->parameters->temperature;
+        if ($request->systemInstructions !== null) {
+            $payload['instructions'] = $request->systemInstructions;
         }
 
         if ($request->parameters->maxOutputTokens !== null) {
-            $payload['max_completion_tokens'] = $request->parameters->maxOutputTokens;
+            $payload['max_output_tokens'] = $request->parameters->maxOutputTokens;
+        }
+
+        if ($this->sendSamplingParameters && $request->parameters->temperature !== null) {
+            $payload['temperature'] = $request->parameters->temperature;
         }
 
         return $payload;
@@ -106,19 +126,15 @@ final class OpenAiTextProvider implements TextGenerationProvider
     /**
      * @return non-empty-list<array{role: string, content: string}>
      */
-    private function messages(ResolvedTextGenerationRequest $request): array
+    private function input(ResolvedTextGenerationRequest $request): array
     {
-        $messages = [];
-
-        if ($request->systemInstructions !== null) {
-            $messages[] = ['role' => 'system', 'content' => $request->systemInstructions];
-        }
+        $input = [];
 
         foreach ($request->messages->all() as $message) {
-            $messages[] = ['role' => $message->role->value, 'content' => $message->content];
+            $input[] = ['role' => $message->role->value, 'content' => $message->content];
         }
 
-        return $messages;
+        return $input;
     }
 
     private function toNeutralResponse(ResolvedTextGenerationRequest $request, Response $response): TextGenerationResponse
@@ -129,44 +145,101 @@ final class OpenAiTextProvider implements TextGenerationProvider
             throw ProviderException::malformedResponse();
         }
 
-        $choices = $body['choices'] ?? null;
-        $choice = is_array($choices) && isset($choices[0]) && is_array($choices[0]) ? $choices[0] : null;
+        $text = $this->extractOutputText($body);
 
-        if ($choice === null) {
-            throw ProviderException::malformedResponse();
-        }
-
-        $message = is_array($choice['message'] ?? null) ? $choice['message'] : [];
-        $content = $message['content'] ?? null;
-
-        if (! is_string($content) || trim($content) === '') {
-            throw ProviderException::malformedResponse();
-        }
-
-        $providerModelId = is_string($body['model'] ?? null) && ($body['model'] !== '')
+        $providerModelId = is_string($body['model'] ?? null) && $body['model'] !== ''
             ? $body['model']
             : $request->vendorModelId;
 
         return new TextGenerationResponse(
-            text: $content,
+            text: $text,
             metadata: new ResponseMetadata(
                 logicalProvider: $request->logicalProvider,
                 logicalModel: $request->logicalModel,
                 providerModelId: $providerModelId,
-                finishReason: $this->finishReason(is_string($choice['finish_reason'] ?? null) ? $choice['finish_reason'] : null),
+                finishReason: $this->finishReason($body),
             ),
-            usage: $this->usage(is_array($body['usage'] ?? null) ? $body['usage'] : []),
+            usage: $this->usage($body),
         );
     }
 
     /**
-     * @param  array<array-key, mixed>  $usage
+     * Aggregate the assistant text from `output[] -> content[]` items of type
+     * `output_text`. Non-text items (e.g. `reasoning`, `refusal`) are skipped.
+     *
+     * @param  array<array-key, mixed>  $body
      */
-    private function usage(array $usage): TokenUsage
+    private function extractOutputText(array $body): string
     {
+        $output = $body['output'] ?? null;
+
+        if (! is_array($output)) {
+            throw ProviderException::malformedResponse();
+        }
+
+        $chunks = [];
+
+        foreach ($output as $item) {
+            if (! is_array($item) || ($item['type'] ?? null) !== 'message') {
+                continue;
+            }
+
+            $content = $item['content'] ?? null;
+
+            if (! is_array($content)) {
+                continue;
+            }
+
+            foreach ($content as $part) {
+                if (is_array($part) && ($part['type'] ?? null) === 'output_text' && is_string($part['text'] ?? null)) {
+                    $chunks[] = $part['text'];
+                }
+            }
+        }
+
+        $text = trim(implode('', $chunks));
+
+        if ($text === '') {
+            throw ProviderException::malformedResponse();
+        }
+
+        return $text;
+    }
+
+    /**
+     * The Responses API has no per-choice `finish_reason`; derive one from the
+     * overall `status` and `incomplete_details.reason`.
+     *
+     * @param  array<array-key, mixed>  $body
+     */
+    private function finishReason(array $body): FinishReason
+    {
+        $incomplete = $body['incomplete_details'] ?? null;
+        $reason = is_array($incomplete) && is_string($incomplete['reason'] ?? null) ? $incomplete['reason'] : null;
+        $status = is_string($body['status'] ?? null) ? $body['status'] : null;
+
+        return match (true) {
+            $reason === 'max_output_tokens' => FinishReason::Length,
+            $reason === 'content_filter' => FinishReason::ContentFilter,
+            $status === 'completed' => FinishReason::Stop,
+            default => FinishReason::Other,
+        };
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $body
+     */
+    private function usage(array $body): TokenUsage
+    {
+        $usage = $body['usage'] ?? null;
+
+        if (! is_array($usage)) {
+            return TokenUsage::unknown();
+        }
+
         return new TokenUsage(
-            inputTokens: $this->nonNegativeInt($usage['prompt_tokens'] ?? null),
-            outputTokens: $this->nonNegativeInt($usage['completion_tokens'] ?? null),
+            inputTokens: $this->nonNegativeInt($usage['input_tokens'] ?? null),
+            outputTokens: $this->nonNegativeInt($usage['output_tokens'] ?? null),
         );
     }
 
@@ -175,21 +248,12 @@ final class OpenAiTextProvider implements TextGenerationProvider
         return is_int($value) && $value >= 0 ? $value : null;
     }
 
-    private function finishReason(?string $raw): FinishReason
-    {
-        return match ($raw) {
-            'stop' => FinishReason::Stop,
-            'length', 'max_tokens' => FinishReason::Length,
-            'content_filter' => FinishReason::ContentFilter,
-            default => FinishReason::Other,
-        };
-    }
-
     /**
      * Pull a SHORT, enum-like field out of the vendor error envelope
-     * (`{"error": {"type": "...", "code": "..."}}`). Anything that is not a
-     * compact token (i.e. a free-text sentence) is dropped, so no vendor prose
-     * — which can quote request content — reaches a log or the operator.
+     * (`{"error": {"type": "...", "code": "...", "param": "..."}}`). Anything
+     * that is not a compact token (i.e. a free-text sentence) is dropped, so no
+     * vendor prose — which can quote request content — reaches a log or the
+     * operator.
      */
     private function shortErrorField(Response $response, string $key): ?string
     {
@@ -204,6 +268,6 @@ final class OpenAiTextProvider implements TextGenerationProvider
 
     private function endpoint(): string
     {
-        return rtrim($this->baseUrl, '/').'/chat/completions';
+        return rtrim($this->baseUrl, '/').'/responses';
     }
 }

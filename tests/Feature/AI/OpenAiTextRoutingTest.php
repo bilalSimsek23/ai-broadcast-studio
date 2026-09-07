@@ -26,12 +26,13 @@ class OpenAiTextRoutingTest extends TestCase
     private function routeLogicalDefaultThroughOpenAi(): void
     {
         config()->set('ai.text.providers.default.driver', 'openai');
-        config()->set('ai.text.models.default.model', 'gpt-4o-mini');
+        config()->set('ai.text.models.default.model', 'gpt-5.6-sol');
         config()->set('ai.text.connections.openai', [
             'api_key' => 'routing-test-key-value',
             'base_url' => 'https://api.openai.test/v1',
             'timeout' => 30,
             'connect_timeout' => 10,
+            'send_sampling_params' => false,
         ]);
 
         // Both singletons read config lazily at first resolution; drop any that
@@ -49,13 +50,18 @@ class OpenAiTextRoutingTest extends TestCase
         );
     }
 
-    public function test_a_logical_model_bound_to_the_openai_driver_calls_the_openai_endpoint(): void
+    public function test_a_logical_model_bound_to_the_openai_driver_calls_the_openai_responses_endpoint(): void
     {
         Http::fake([
-            'https://api.openai.test/v1/chat/completions' => Http::response([
-                'model' => 'gpt-4o-mini',
-                'choices' => [['message' => ['content' => 'Yanıt.'], 'finish_reason' => 'stop']],
-                'usage' => ['prompt_tokens' => 3, 'completion_tokens' => 2],
+            'https://api.openai.test/v1/responses' => Http::response([
+                'model' => 'gpt-5.6-sol',
+                'status' => 'completed',
+                'output' => [
+                    ['type' => 'message', 'role' => 'assistant', 'content' => [
+                        ['type' => 'output_text', 'text' => 'Yanıt.'],
+                    ]],
+                ],
+                'usage' => ['input_tokens' => 3, 'output_tokens' => 2],
             ]),
         ]);
         $this->routeLogicalDefaultThroughOpenAi();
@@ -64,8 +70,10 @@ class OpenAiTextRoutingTest extends TestCase
 
         $this->assertSame('Yanıt.', $response->text);
         $this->assertSame('default', $response->metadata->logicalProvider);
-        Http::assertSent(fn (Request $request): bool => $request->url() === 'https://api.openai.test/v1/chat/completions'
-            && $request->data()['model'] === 'gpt-4o-mini');
+        Http::assertSent(fn (Request $request): bool => $request->url() === 'https://api.openai.test/v1/responses'
+            && $request->data()['model'] === 'gpt-5.6-sol'
+            // the logical `default` model's configured temperature (0.7) is not forwarded
+            && ! array_key_exists('temperature', $request->data()));
     }
 
     public function test_without_opting_in_the_default_logical_provider_still_uses_the_fake_driver(): void

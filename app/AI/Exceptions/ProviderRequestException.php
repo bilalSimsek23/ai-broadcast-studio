@@ -9,10 +9,11 @@ namespace App\AI\Exceptions;
  * status (auth failure, rate limit, bad request, upstream error).
  *
  * Only the HTTP status and, when the vendor supplied them in a recognised
- * short/enumerated form, an error `type` and `code` are carried. The vendor's
- * free-text error message and the raw response body are deliberately dropped —
- * they can echo request content or otherwise be sensitive, and are never shown
- * to an operator (CLAUDE.md §5, §6).
+ * short/enumerated form, an error `type`, `code` and `param` (the offending
+ * field name, e.g. `temperature`) are carried. The vendor's free-text error
+ * message and the raw response body are deliberately dropped — they can echo
+ * request content or otherwise be sensitive, and are never shown to an
+ * operator (CLAUDE.md §5, §6).
  */
 final class ProviderRequestException extends ProviderException
 {
@@ -23,7 +24,7 @@ final class ProviderRequestException extends ProviderException
         parent::__construct($message);
     }
 
-    public static function fromResponse(int $status, ?string $type = null, ?string $code = null): self
+    public static function fromResponse(int $status, ?string $type = null, ?string $code = null, ?string $param = null): self
     {
         $detail = '';
 
@@ -33,6 +34,10 @@ final class ProviderRequestException extends ProviderException
 
         if ($code !== null) {
             $detail .= sprintf(', code: %s', $code);
+        }
+
+        if ($param !== null) {
+            $detail .= sprintf(', param: %s', $param);
         }
 
         return new self(

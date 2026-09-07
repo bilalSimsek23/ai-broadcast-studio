@@ -321,21 +321,33 @@ Episode editorial data ─▶ AssembleRehearsalPrompt.assemble()  (app/AI/Prompt
                             → TextGenerationRequest (logical model key)
                               → GenerateText → LogicalModelResolver
                                 → OpenAiTextProvider  (app/AI/Providers/OpenAi)
-                                  → Http (Chat Completions, connect+read timeout, retry(2), no stream)
+                                  → Http (Responses API, connect+read timeout, retry(2), no stream)
 Filament "AI Provası" page (RehearseEpisode) orchestrates the above; renders one response; persists nothing.
 ```
 
 **`OpenAiTextProvider`** — implements `TextGenerationProvider`; the only place
-the OpenAI HTTP shape lives. Credentials come only from
-`config('ai.text.connections.openai')` (env-sourced) via an `AiServiceProvider`
-singleton — never a constructor literal, never persisted, never logged/echoed/
-in an exception. Vendor error translation (new `App\AI\Exceptions`):
-`ProviderException` (base — missing key fails before any send; unintelligible
-2xx body), `ProviderTimeoutException` (connection/read failure; message names
-only the timeout seconds), `ProviderRequestException` (non-2xx; carries only
-HTTP `status` + short enum-like `type`/`code` — vendor free-text and raw bodies
-are dropped). A raw Guzzle/HTTP exception or vendor payload never escapes
-`generate()`.
+the OpenAI HTTP shape lives. Targets the **Responses API**
+(`POST {base_url}/responses`) — the current surface for the GPT-5.x family.
+Neutral → OpenAI mapping (adapter-only): `systemInstructions` → top-level
+`instructions`; conversation turns → `input` (role/content items);
+`maxOutputTokens` → `max_output_tokens`. Response: assistant text is aggregated
+from `output[].content[]` `output_text` parts (`reasoning`/`refusal` items
+skipped); `usage.input_tokens`/`output_tokens` → `TokenUsage`; finish reason is
+derived from `status` + `incomplete_details.reason`.
+**`temperature` is NOT sent by default** — GPT-5.x reasoning models reject any
+non-default value with `HTTP 400 unsupported_value`; the neutral layer still
+carries it, and the adapter forwards it only when the connection sets
+`send_sampling_params` (env `OPENAI_TEXT_SEND_SAMPLING`, default false — for a
+GPT-4-class deployment).
+Credentials come only from `config('ai.text.connections.openai')` (env-sourced)
+via an `AiServiceProvider` singleton — never a constructor literal, never
+persisted, never logged/echoed/in an exception. Vendor error translation (new
+`App\AI\Exceptions`): `ProviderException` (base — missing key fails before any
+send; no output text), `ProviderTimeoutException` (connection/read failure;
+message names only the timeout seconds), `ProviderRequestException` (non-2xx;
+carries only HTTP `status` + short enum-like `type`/`code`/`param` — vendor
+free-text and raw bodies are dropped). A raw Guzzle/HTTP exception or vendor
+payload never escapes `generate()`.
 
 **`AssembleRehearsalPrompt`** — builds the `TextGenerationRequest` from
 Show/Episode context, episode broadcast instructions, persona identity +

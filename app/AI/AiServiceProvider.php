@@ -34,6 +34,7 @@ final class AiServiceProvider extends ServiceProvider
                     : 'https://api.openai.com/v1',
                 timeoutSeconds: self::positiveInt($connection['timeout'] ?? null, 30),
                 connectTimeoutSeconds: self::positiveInt($connection['connect_timeout'] ?? null, 10),
+                sendSamplingParameters: ($connection['send_sampling_params'] ?? false) === true,
             );
         });
 

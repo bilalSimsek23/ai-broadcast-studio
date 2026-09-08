@@ -57,4 +57,20 @@ class MintStudioSessionTest extends TestCase
             $this->app->make(FakeRealtimeVoiceProvider::class)->lastCall()?->instructions,
         );
     }
+
+    public function test_it_passes_getusermedia_constraints_through_from_config(): void
+    {
+        // Defaults (config/ai.php): all three on.
+        $this->assertSame(
+            ['echoCancellation' => true, 'noiseSuppression' => true, 'autoGainControl' => true],
+            ($this->mint())()->audioConstraints,
+        );
+
+        config()->set('ai.realtime.audio.constraints.autoGainControl', false);
+
+        $this->assertSame(
+            ['echoCancellation' => true, 'noiseSuppression' => true, 'autoGainControl' => false],
+            ($this->mint())()->audioConstraints,
+        );
+    }
 }

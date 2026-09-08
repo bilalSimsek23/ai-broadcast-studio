@@ -30,9 +30,18 @@ use Illuminate\Support\Facades\Http;
  *  - transport / HTTP / parse failures are translated into
  *    {@see ProviderException} and its subtypes — a raw HTTP exception or raw
  *    vendor body never escapes.
+ *
+ * Studio-room noise: the input pipeline (`session.audio.input`) is tuned from
+ * config — a `noise_reduction` profile and a MILD server_vad raise — so a fan
+ * / AC / distant chatter is less likely to be taken as speech, without
+ * clipping the onset of a real utterance or disabling barge-in.
  */
 final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
 {
+    /**
+     * @param  array<string, int|float>  $turnDetection  optional server_vad
+     *                                                   overrides: threshold, prefix_padding_ms, silence_duration_ms
+     */
     public function __construct(
         private readonly string $apiKey,
         private readonly string $baseUrl,
@@ -40,6 +49,8 @@ final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
         private readonly string $voice,
         private readonly int $timeoutSeconds,
         private readonly int $connectTimeoutSeconds,
+        private readonly array $turnDetection = [],
+        private readonly ?string $noiseReduction = null,
     ) {}
 
     public function createClientSession(RealtimeSessionRequest $request): RealtimeSessionToken
@@ -49,6 +60,12 @@ final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
         }
 
         $voice = $request->voiceOverride ?? $this->voice;
+
+        $audio = ['output' => ['voice' => $voice]];
+        $input = $this->inputAudio();
+        if ($input !== []) {
+            $audio['input'] = $input;
+        }
 
         try {
             $response = Http::asJson()
@@ -61,9 +78,7 @@ final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
                         'type' => 'realtime',
                         'model' => $this->model,
                         'instructions' => $request->instructions,
-                        'audio' => [
-                            'output' => ['voice' => $voice],
-                        ],
+                        'audio' => $audio,
                     ],
                 ]);
         } catch (ConnectionException) {
@@ -80,6 +95,43 @@ final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
         }
 
         return $this->toToken($response, $voice);
+    }
+
+    /**
+     * The OpenAI `session.audio.input` block, built from config. Empty when no
+     * tuning is configured (keeps the request minimal for tests / defaults).
+     *
+     * @return array<string, mixed>
+     */
+    private function inputAudio(): array
+    {
+        $input = [];
+
+        if ($this->noiseReduction !== null && $this->noiseReduction !== '' && $this->noiseReduction !== 'off') {
+            $input['noise_reduction'] = ['type' => $this->noiseReduction];
+        }
+
+        if ($this->turnDetection !== []) {
+            $vad = [
+                'type' => 'server_vad',
+                'create_response' => true,
+                'interrupt_response' => true,
+            ];
+
+            if (isset($this->turnDetection['threshold'])) {
+                $vad['threshold'] = (float) $this->turnDetection['threshold'];
+            }
+            if (isset($this->turnDetection['prefix_padding_ms'])) {
+                $vad['prefix_padding_ms'] = (int) $this->turnDetection['prefix_padding_ms'];
+            }
+            if (isset($this->turnDetection['silence_duration_ms'])) {
+                $vad['silence_duration_ms'] = (int) $this->turnDetection['silence_duration_ms'];
+            }
+
+            $input['turn_detection'] = $vad;
+        }
+
+        return $input;
     }
 
     private function toToken(Response $response, string $voice): RealtimeSessionToken

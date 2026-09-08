@@ -8,26 +8,54 @@
 
 ## TASK-0007 — STUDIO LIVE REALTIME VOICE PROTOTYPE
 
-**Status:** COMPLETE — Pint, `php artisan test` (234 passing), PHPStan level 6
-(0, no baseline) all green. Acceptance is a manual Chrome check (below) — NOT
-yet performed.
+**Status:** COMPLETE — Pint, `php artisan test` (242 passing), PHPStan level 6
+(0, no baseline) all green. Real Chrome / microphone / multi-device acceptance
+is MANUAL and has NOT been run automatically (JS was syntax-checked only).
 
-**Amended 2026-09-08:** session cap is **20 min** (not 10);
-`STUDIO_LIVE_MAX_SECONDS` default is **1200**; the browser reads the length
-only from the backend (no duplicated hardcoded value); added a **clean
-broadcast view** that hides the operator controls (status/countdown/buttons)
-leaving only the orb, without disabling the time limit or auto-close.
+**Amendments after the first live prova (2026-09-08):**
+1. Session cap **20 min** (`STUDIO_LIVE_MAX_SECONDS` default 1200); the browser
+   reads the length only from the backend response (no literal).
+2. `/studio/live` is now the **clean broadcast output**: steady state is ONLY
+   the orb — no buttons, status, countdown, hint or any text. All operator
+   controls moved to a Filament admin page.
+3. New Filament page **"Canlı Yayın Kontrolü"** (`/admin/studio-control`): the
+   director's console — Bağlan / Görüşmeyi bitir / Mikrofonu sessize al /
+   Mikrofonu aç, connection + mute state, remaining time, **AI Ses Girişi** and
+   **AI Ses Çıkışı** physical device selectors, "Ses cihazlarını yenile".
+4. Studio-room noise handling: getUserMedia `echoCancellation` /
+   `noiseSuppression` / `autoGainControl` (config → response, no literal) and a
+   MILD OpenAI `server_vad` raise + `far_field` `noise_reduction`
+   (`config('ai.realtime.audio')`), barge-in kept on.
+5. Orb enlarged to `min(70vw, 70vh)` and made mathematically contained — at max
+   amplitude the outer glow is exactly `S*0.49`, never clipped at any
+   resolution; the CSS `drop-shadow` (which the container could clip) is gone.
 
-**Goal:** the first working prototype of an uninterrupted spoken Turkish
-debate between a real studio host and the AI. A new full-screen route
-`/studio/live`: browser mic → OpenAI Realtime → played back, with only a
-pulsing orb (no text, no transcript); operator controls (Bağlan / Yayın
-görünümü / Görüşmeyi bitir + status line + countdown) that can be hidden for
-broadcast.
+**Goal:** the first working prototype of an uninterrupted spoken Turkish debate
+between a real studio host and the AI, split into a **clean broadcast layer**
+(`/studio/live`, orb only) and an **operator layer** (Filament) in the same
+browser.
 
 **Decisions (confirmed with the user):** standalone (no Episode/AiPersona
 coupling yet) · authenticated only (admin) · WebRTC + ephemeral key · session
-auto-ends at 20 min (configurable up to 60).
+auto-ends at 20 min (config, up to 60) · device discovery + deviceId management
+entirely in the reji browser (never Laravel).
+
+### Architecture (E / G)
+
+`/studio/live` stays the SOLE owner of `getUserMedia`, the
+`RTCPeerConnection` and the `<audio>` sink, and renders only the orb. The
+Filament **Canlı Yayın Kontrolü** page holds no media: it enumerates the reji
+machine's audio devices in the browser (`navigator.mediaDevices.enumerateDevices`),
+shows the selectors + transport/mute/state, persists the chosen deviceIds in
+`localStorage` (per-machine, never server config), and drives `/studio/live`
+over a **same-origin `BroadcastChannel('studio-live')`**. Protocol: control →
+broadcast `{type:'cmd', cmd:'connect'|'hangup'|'mute'|'unmute'}` and
+`{type:'devices', inputId, outputId}`; broadcast → control `{type:'state', …}`
+every second (doubles as a liveness heartbeat) + `{type:'hello'}` on load. **No
+server-side realtime/audio relay** — the server only does auth / session
+minting / config (CLAUDE.md §2.9, §5). The two pages must be open in the same
+browser (typical single reji PC: broadcast output on one monitor / OBS source,
+control on another).
 
 ### Delivered
 
@@ -41,127 +69,161 @@ auto-ends at 20 min (configurable up to 60).
   credential beyond the ephemeral secret).
 - `app/AI/Providers/OpenAi/OpenAiRealtimeProvider` — the only place the OpenAI
   realtime shape lives. `POST {base}/realtime/client_secrets` with the standing
-  key as Bearer, `session.type/model/instructions/audio.output.voice` body;
-  parses both the flat (`{value, expires_at, session}`) and nested
-  (`{client_secret:{…}}`) shapes; `retry(1)` + connect/read timeout. Reuses the
-  `ProviderException` / `ProviderTimeoutException` / `ProviderRequestException`
-  hierarchy — no key/URL/free-text ever in a message. The standing key never
-  leaves the process; the browser only ever gets the ephemeral secret.
+  key as Bearer; `session` body carries `type`/`model`/`instructions`/
+  `audio.output.voice` and, when configured, `audio.input` (`noise_reduction`
+  + `server_vad` tuning + `create_response`/`interrupt_response`). Parses flat +
+  nested secret shapes; `retry(1)` + timeouts; reuses the `ProviderException` /
+  `ProviderTimeoutException` / `ProviderRequestException` hierarchy — no
+  key/URL/free-text in a message. The standing key never leaves the process.
 - `app/AI/Providers/Fake/FakeRealtimeVoiceProvider` — offline default driver;
   deterministic `ek_fake_…` secret (never `sk-`), records calls.
 - `app/AI/Realtime/MintStudioSession` (thin service) + `StudioSession` DTO —
-  reads the standing Turkish brief + time cap + WebRTC URL from config, asks
-  the bound provider for an ephemeral session, returns the JSON the browser
-  needs. `app/AI/AiServiceProvider` binds all three and selects the driver
-  from `config('ai.realtime.driver')` (`fake` default, `openai` in prod).
+  reads the standing Turkish brief + time cap + WebRTC URL + getUserMedia
+  constraints from config, asks the bound provider for an ephemeral session,
+  returns the JSON the broadcast page needs (incl. `audio_constraints`).
+  `app/AI/AiServiceProvider` binds all three and selects the driver from
+  `config('ai.realtime.driver')` (`fake` default, `openai` in prod), passing
+  `config('ai.realtime.audio.turn_detection')` + `noise_reduction` to the
+  OpenAI adapter.
+- `app/Filament/Pages/StudioControl` + its Alpine view — the operator console
+  (device selectors, transport/mute, state readouts); no PHP media logic,
+  drives the broadcast page over `BroadcastChannel`.
 
 **HTTP surface** — `routes/web.php`:
-- `GET /studio/live` → `StudioLiveController@show` (full-screen Blade).
-- `POST /studio/live/session` → `StudioLiveController@session` →
-  `MintStudioSession`; returns `{client_secret, expires_at, model, voice,
-  session_max_seconds, webrtc_url}`; a `ProviderException` is `report()`ed and
-  becomes a generic `503 {error:"realtime_unavailable"}` (no key, no vendor
-  text). Rate-limited `throttle:12,1`.
-- Both behind `App\Http\Middleware\EnsureStudioOperator` — guest → redirect to
-  `/admin/login` (or `401` for a JSON call), authenticated non-admin → `403`.
+- `GET /studio/live` → `StudioLiveController@show` — the clean broadcast Blade
+  (orb only).
+- `POST /studio/live/session` → `MintStudioSession`; returns
+  `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url,
+  audio_constraints:{echoCancellation,noiseSuppression,autoGainControl}}`; a
+  `ProviderException` is `report()`ed → generic `503
+  {error:"realtime_unavailable"}` (no key/vendor text). `throttle:12,1`.
+- Both behind `App\Http\Middleware\EnsureStudioOperator` — guest → `/admin/login`
+  (or `401` JSON), non-admin → `403`.
+- The Filament page **`App\Filament\Pages\StudioControl`** (`/admin/studio-control`)
+  is auto-discovered; panel-gated to admins + its own `canAccess()` check.
 
-**Frontend** — `resources/views/studio/live.blade.php`, standalone dark
-full-screen page, inline vanilla JS, no build step:
-- `Bağlan`: `POST /studio/live/session` → `getUserMedia({audio})` →
-  `RTCPeerConnection`, add mic track + `recvonly` transceiver → `createOffer`
-  → `POST {webrtc_url}?model=…` with `Authorization: Bearer <ephemeral>` and
-  `Content-Type: application/sdp` → `setRemoteDescription(answer)`.
-- Remote audio → hidden `<audio autoplay>` + an `AnalyserNode`; a `<canvas>`
-  orb (radial-gradient sphere + ring) whose radius/glow tracks the AI's speech
-  amplitude, gentle idle breathing otherwise. **No transcript / text output.**
-- Countdown length is `session_max_seconds` from the backend response — the
-  browser holds **no** copy of the number (`startTimer(s.session_max_seconds)`,
-  no fallback literal). At zero → `hangup('Süre doldu')`.
-- **One clean-shutdown path** (`hangup`) used by both the time limit and
-  `Görüşmeyi bitir`: `pc.close()`, stop + release every mic track,
-  `audioCtx.close()`, `sink.pause()` + detach the stream, restore the operator
-  view.
-- **Clean broadcast view**: `Yayın görünümü` adds `body.clean`, which hides
-  `#controls` / `#status` / `#timer` (orb only, cursor hidden). `Esc` or a
-  click returns to the controls; `mousemove` briefly shows an "Esc" hint. The
-  toggle is view-only — the countdown keeps running and auto-close still fires;
-  `hangup` also clears clean mode so controls reappear when the session ends.
-- Turkish status line: Hazır / Bağlanıyor… / Bağlı — konuşabilirsiniz /
-  Bağlantı kesildi / Süre doldu.
+**Broadcast layer** — `resources/views/studio/live.blade.php`: `<canvas id="orb">`
++ hidden `<audio>` + inline vanilla JS, nothing else visible. Owns the mic +
+`RTCPeerConnection` + sink. Listens on `BroadcastChannel('studio-live')` for
+`cmd` (connect/hangup/mute/unmute) and `devices` (input/output deviceId);
+publishes `state` (connected, muted, remainingSeconds, status, inputActive,
+outputSupported, deviceError, deviceLost) every 2s + on change. `connect()`:
+`POST /studio/live/session` → `getUserMedia({audio:{ …constraints, deviceId:{exact}
+if chosen }})` → peer + `recvonly` transceiver → SDP `POST` with the ephemeral
+Bearer → `setRemoteDescription`; `sink.setSinkId(outputId)` when supported.
+`getUserMedia` with a chosen device that fails → `deviceError` (NO silent
+default fallback). `devicechange` while live and the active input is gone →
+`deviceLost`. Countdown = `session_max_seconds` from the response (no literal);
+at zero → `hangup()`. One `hangup()` path (time limit AND operator end): close
+peer, stop playback, stop + release every mic track. Mute = `track.enabled=false`
+on the selected input track only — peer/session untouched. Autoplay unlock:
+one click anywhere on the broadcast screen. Orb: `min(70vw,70vh)`, contained by
+construction (max glow = `S*0.49`), no CSS drop-shadow.
 
-**Config** — `config/ai.php` gains an `ai.realtime` section: `driver`
-(`AI_REALTIME_DRIVER`, default `fake`), `session_max_seconds`
-(`STUDIO_LIVE_MAX_SECONDS`, **default 1200 = 20 min**, clamped to [30, 3600]),
-`webrtc_url`
-(`OPENAI_REALTIME_WEBRTC_URL`), `instructions` (`STUDIO_LIVE_INSTRUCTIONS`,
-built-in Turkish debate brief), `drivers`, and `connections.openai`
-(`api_key` reusing `OPENAI_API_KEY`, `base_url` reusing `OPENAI_BASE_URL`,
-`OPENAI_REALTIME_MODEL` default `gpt-realtime`, `OPENAI_REALTIME_VOICE` default
-`marin`, timeouts). All documented in `.env.example`.
+**Operator layer** — `resources/views/filament/pages/studio-control.blade.php`
+(Alpine): device permission handling + `enumerateDevices()` for `audioinput` /
+`audiooutput` with same-name disambiguation; **AI Ses Girişi** / **AI Ses
+Çıkışı** `<select>`s; "Ses cihazlarını yenile" + `mediaDevices.ondevicechange`
+auto-refresh; localStorage persistence (`studio.control.inputDeviceId` /
+`…outputDeviceId`) reloaded on open, auto-selected if still present, else a
+"yeniden seçin" prompt; **Bağlan** (disabled until broadcast alive + an input
+chosen) / **Görüşmeyi bitir** / **Mikrofonu sessize al** / **Mikrofonu aç**;
+readouts for Bağlantı / Mikrofon (AÇIK·SESSİZ) / Kalan süre / Durum; critical
+red banner on `deviceLost`, error on `deviceError`, "Bu tarayıcı ses çıkışı
+seçimini desteklemiyor" when `outputSupported === false`.
+
+**Config** — `config/ai.php` `ai.realtime`: `driver` (`AI_REALTIME_DRIVER`,
+default `fake`), `session_max_seconds` (`STUDIO_LIVE_MAX_SECONDS`, **default
+1200 = 20 min**, clamped [30, 3600]), `webrtc_url`, `instructions`, **`audio`**
+(new): `constraints.{echoCancellation,noiseSuppression,autoGainControl}`
+(`STUDIO_LIVE_ECHO_CANCELLATION` / `_NOISE_SUPPRESSION` / `_AUTO_GAIN`, all
+default true; passed through to the browser), `noise_reduction`
+(`STUDIO_LIVE_NOISE_REDUCTION`, default `far_field`), `turn_detection.{threshold,
+prefix_padding_ms, silence_duration_ms}` (`STUDIO_LIVE_VAD_THRESHOLD` 0.6 /
+`_PREFIX_MS` 300 / `_SILENCE_MS` 500). `OpenAiRealtimeProvider` folds the
+`noise_reduction` + `server_vad` tuning (with `create_response` +
+`interrupt_response` always true) into `session.audio.input`; empty when
+unconfigured. `drivers` + `connections.openai` unchanged. `.env.example`
+documents every key. **Physical deviceIds are NEVER server config** — they live
+only in the reji browser's localStorage.
 
 ### Required production environment variables
 
 `AI_REALTIME_DRIVER=openai`, `OPENAI_API_KEY=<secret>` (already set for text).
-Optional: `OPENAI_REALTIME_MODEL` (default `gpt-realtime`),
-`OPENAI_REALTIME_VOICE` (default `marin`), `STUDIO_LIVE_MAX_SECONDS`
-(default 1200 = 20 min; set 1800–2400 for 30–40 min rehearsals — **if the
-environment currently has `STUDIO_LIVE_MAX_SECONDS=600` it must be changed to
-1200 or removed**), `STUDIO_LIVE_INSTRUCTIONS`, `OPENAI_REALTIME_WEBRTC_URL`
-(default `https://api.openai.com/v1/realtime/calls`),
-`OPENAI_REALTIME_TIMEOUT` / `OPENAI_REALTIME_CONNECT_TIMEOUT`. The API key is
-only ever minted into a short-lived ephemeral secret server-side and is never
-sent to the browser.
+Optional tuning: `OPENAI_REALTIME_MODEL` (`gpt-realtime`), `OPENAI_REALTIME_VOICE`
+(`marin`), `STUDIO_LIVE_MAX_SECONDS` (1200; 1800–2400 for 30–40 min rehearsals —
+**if the environment still has `STUDIO_LIVE_MAX_SECONDS=600` it MUST be changed
+to 1200 or removed**), `STUDIO_LIVE_INSTRUCTIONS`, `STUDIO_LIVE_NOISE_REDUCTION`
+(`far_field`), `STUDIO_LIVE_VAD_THRESHOLD` (`0.6`), `STUDIO_LIVE_VAD_SILENCE_MS`
+(`500`), `STUDIO_LIVE_VAD_PREFIX_MS` (`300`), `STUDIO_LIVE_ECHO_CANCELLATION` /
+`_NOISE_SUPPRESSION` / `_AUTO_GAIN` (`true`), `OPENAI_REALTIME_WEBRTC_URL`,
+`OPENAI_REALTIME_TIMEOUT` / `_CONNECT_TIMEOUT`. The API key is only ever minted
+into a short-lived ephemeral secret server-side, never sent to the browser.
 
-### Tests (no real OpenAI network calls)
+### Tests (no real OpenAI network / no real browser or audio hardware)
 
-- `tests/Unit/AI/RealtimeSessionTokenTest.php` — neutral `toArray()` keys only;
-  rejects empty secret, a `sk-…` secret, non-positive expiry, blank model/voice.
-- `tests/Feature/AI/OpenAiRealtimeProviderTest.php` — `Http::fake` mint →
-  neutral token; Bearer = standing key + `session` body shape; voice override
-  in payload + token; nested `client_secret` shape; missing key fails before
-  any send; connection failure → `ProviderTimeoutException` (no host/key);
-  non-2xx → `ProviderRequestException` (status/type/code, vendor free-text +
-  key dropped); no `value` → `ProviderException`; a standing key echoed as the
-  secret is rejected, not forwarded.
-- `tests/Feature/AI/FakeRealtimeVoiceProviderTest.php` — implements contract;
-  `ek_fake_` secret never `sk-`; deterministic; records calls + voice override.
-- `tests/Feature/AI/MintStudioSessionTest.php` — **default length is 1200s**;
-  honours a configured length incl. a 40-min (2400s) rehearsal; clamps out of
-  range to [30, 3600]; unusable config value → 1200; forwards the configured
-  brief + `webrtc_url`.
+- `tests/Unit/AI/RealtimeSessionTokenTest.php` — neutral keys only; rejects empty
+  / `sk-…` secret, non-positive expiry, blank model/voice.
+- `tests/Feature/AI/OpenAiRealtimeProviderTest.php` — mint → neutral token;
+  Bearer = standing key + `session` body; voice override; nested `client_secret`
+  shape; missing key fails pre-send; connection failure → `ProviderTimeoutException`;
+  non-2xx → `ProviderRequestException` (status/type/code only); no `value` →
+  `ProviderException`; standing key echoed back is rejected. **New:** no
+  `audio.input` when unconfigured; configured tuning → `session.audio.input`
+  with `noise_reduction.type=far_field`, `server_vad` threshold/silence/prefix
+  **and `interrupt_response=true`** (barge-in); `noise_reduction:'off'` omitted.
+- `tests/Feature/AI/FakeRealtimeVoiceProviderTest.php` — contract; `ek_fake_`
+  secret; deterministic; records calls + voice override.
+- `tests/Feature/AI/MintStudioSessionTest.php` — default length 1200; honours a
+  configured length incl. 2400; clamps to [30, 3600]; unusable value → 1200;
+  forwards brief + `webrtc_url`; **passes getUserMedia constraints through from
+  config (default all-on; `autoGainControl:false` reflected).**
 - `tests/Feature/Studio/StudioLivePageTest.php` — guest → `/admin/login`;
-  non-admin → 403; admin → 200 with the orb + buttons + session endpoint, the
-  `Yayın görünümü` clean-view toggle + `body.clean` + `Süre doldu` shutdown
-  branch, `startTimer(s.session_max_seconds)` and **no `|| 600` literal**, and
-  **no transcript / no key**.
+  non-admin → 403; admin → **only the orb**: no `<button>`, no `#controls` /
+  `#connect` / `#hangup` / `#timer` / `#status`, no "Yayın görünümü"; carries
+  `BroadcastChannel('studio-live')`, `startTimer(s.session_max_seconds)` (no
+  `|| 600`), `deviceId: { exact: inputDeviceId }`, `setSinkId`; no transcript /
+  no key.
 - `tests/Feature/Studio/StudioLiveSessionTest.php` — guest → 401; non-admin →
-  403; fake driver → usable JSON, standing key never in the body, no HTTP;
-  **default `session_max_seconds` = 1200**, configurable to 2400 or 480;
-  openai driver (`Http::fake`) → mints via the API, Bearer = standing key,
-  brief forwarded, key not in the response; upstream 401 → safe `503`
-  `realtime_unavailable`, no key; endpoint is rate-limited (13th call → 429).
+  403; fake driver → usable JSON incl. `audio_constraints` (all true by
+  default; `noiseSuppression:false` when configured), key never in body, no
+  HTTP; default `session_max_seconds` 1200, configurable 2400/480; openai
+  driver (`Http::fake`) → mints via API, Bearer = standing key, brief forwarded,
+  key not in response; upstream 401 → safe `503`; rate-limited (13th → 429).
+- `tests/Feature/Filament/StudioControlPageTest.php` — guest → `/admin/login`;
+  non-admin → 403; admin → console with all four transport/mute buttons, both
+  device selectors, "Ses cihazlarını yenile", Kalan süre / Mikrofon readouts,
+  `BroadcastChannel('studio-live')` + `enumerateDevices` + `localStorage`, the
+  unsupported-output message; no key / `client_secret` / `sk-`.
 
 ### Acceptance checklist
 
-- [x] New `/studio/live` full-screen route; orb-only UI, no text/transcript
-- [x] Browser mic → OpenAI Realtime (Türkçe) → played back; orb reacts to AI speech
-- [x] Bağlan / Görüşmeyi bitir + Turkish status indicator
-- [x] API key never in the frontend — backend mints an ephemeral WebRTC session
-- [x] Admin-gated route + rate-limited, `report()`ed safe failure
-- [x] **20-minute** auto-end; length is backend config only (no hardcoded
-      browser copy); configurable up to 60 min for longer rehearsals
-- [x] Clean broadcast view hides the operator controls (orb only) without
-      disabling the time limit / auto-close; operator can return via Esc/click
-- [x] One clean-shutdown path (close peer, stop playback, release mic) for both
-      the time limit and `Görüşmeyi bitir`
-- [x] No existing feature touched (additive: new routes/controller/middleware/
-      config section/contract/adapter/DTOs/view/tests)
-- [x] Pint · `php artisan test` (234) · PHPStan level 6 (0, no baseline)
-- [ ] **Manual (Chrome) — NOT yet performed:** log in as admin → open
-      `/studio/live` → Bağlan → allow mic → hold a few Turkish back-and-forth
-      turns → try `Yayın görünümü` + Esc → Görüşmeyi bitir; separately let the
-      countdown reach zero and confirm it disconnects, stops audio and releases
-      the mic. (Requires `AI_REALTIME_DRIVER=openai` + a real `OPENAI_API_KEY`.)
+- [x] `/studio/live` broadcast output = orb only (no controls/text/counter/hint)
+- [x] Filament "Canlı Yayın Kontrolü" console: Bağlan / bitir / mute / unmute +
+      connection + mute state + remaining time
+- [x] Mute = `track.enabled=false` on the selected input track; peer/AI session
+      not dropped; unmute resumes the same session
+- [x] AI Ses Girişi + AI Ses Çıkışı device selectors (`enumerateDevices`,
+      `getUserMedia deviceId:{exact}`, `setSinkId`), permission flow, explicit
+      error + reselect when a chosen device is gone (no silent default)
+- [x] "Ses cihazlarını yenile" + `ondevicechange` auto-refresh; critical
+      warning when the live input device disappears
+- [x] deviceIds persisted browser-local (`localStorage`), never server config;
+      reloaded + auto-selected on open
+- [x] getUserMedia `echoCancellation`/`noiseSuppression`/`autoGainControl` +
+      config-driven `far_field` noise reduction + mild `server_vad` raise
+      (barge-in preserved); no magic numbers in the frontend
+- [x] Orb `min(70vw,70vh)`, pulse mathematically contained (max glow `S*0.49`),
+      no clipping at any resolution, no container-clipped CSS drop-shadow
+- [x] 20-minute auto-end; length from backend config only; up to 60 min
+- [x] One clean-shutdown path (peer close + stop playback + release mic) for
+      both the time limit and the operator end command
+- [x] No backend device enumeration; no server-side audio relay; existing
+      WebRTC/ephemeral-key + admin gating unchanged
+- [x] No existing feature or test broken (additive only)
+- [x] Pint · `php artisan test` (242) · PHPStan level 6 (0, no baseline)
+- [ ] **Manual (real Chrome + ≥2 audio interfaces) — NOT performed here** (JS
+      syntax-checked only). See the checklist in the delivery report.
 
 ### Next task (draft, not started)
 

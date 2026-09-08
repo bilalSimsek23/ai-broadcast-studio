@@ -134,6 +134,35 @@ return [
         // via env for tuning without a deploy.
         'instructions' => env('STUDIO_LIVE_INSTRUCTIONS', 'Sen bir canlı Türk televizyon programında, stüdyodaki insan sunucuyla Türkçe sesli olarak tartışan bir yapay zekâ konuşmacısısın. Doğal, akıcı ve kesintisiz konuş; kısa, net cümleler kur. Önce sunucuyu dinle, sonra yanıt ver. Karşıt görüşleri nazik ama kararlı biçimde savun ve gerekçelendir. Her koşulda yalnızca Türkçe konuş.'),
 
+        // Studio-room audio handling. All values are config, not literals in
+        // the frontend: `constraints` are passed through to the browser's
+        // getUserMedia; the rest tunes the OpenAI Realtime input pipeline so
+        // ambient noise (fan/AC/distant talk) is less likely to be taken as
+        // speech WITHOUT clipping the start of a real utterance or breaking
+        // barge-in.
+        'audio' => [
+            'constraints' => [
+                'echoCancellation' => (bool) env('STUDIO_LIVE_ECHO_CANCELLATION', true),
+                'noiseSuppression' => (bool) env('STUDIO_LIVE_NOISE_SUPPRESSION', true),
+                'autoGainControl' => (bool) env('STUDIO_LIVE_AUTO_GAIN', true),
+            ],
+
+            // OpenAI input noise reduction profile: near_field | far_field | off.
+            // "far_field" suits a studio mic that is not right at the mouth.
+            'noise_reduction' => env('STUDIO_LIVE_NOISE_REDUCTION', 'far_field'),
+
+            // server_vad tuning — a MILD raise of the defaults, not a hard gate.
+            // threshold: 0.5 default -> 0.6 (ignore quiet room noise);
+            // prefix_padding_ms: keep 300 so the onset of speech is not lost;
+            // silence_duration_ms: 200 default -> 500 (don't end a turn on a
+            // brief noise). Barge-in stays on (interrupt_response).
+            'turn_detection' => [
+                'threshold' => (float) env('STUDIO_LIVE_VAD_THRESHOLD', 0.6),
+                'prefix_padding_ms' => (int) env('STUDIO_LIVE_VAD_PREFIX_MS', 300),
+                'silence_duration_ms' => (int) env('STUDIO_LIVE_VAD_SILENCE_MS', 500),
+            ],
+        ],
+
         'drivers' => [
             'fake' => FakeRealtimeVoiceProvider::class,
             'openai' => OpenAiRealtimeProvider::class,

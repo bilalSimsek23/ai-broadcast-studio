@@ -64,9 +64,11 @@ _Not modelled yet (later tasks):_
 ## Non-goals (for now)
 
 - No public viewer accounts / viewer-facing web app.
-- No websocket/broadcasting (Reverb/Pusher) infrastructure. (TASK-0007's
-  `/studio/live` voice prototype uses browser WebRTC straight to OpenAI with a
-  backend-minted ephemeral key — no realtime server, no broadcasting.)
+- No websocket/broadcasting (Reverb/Pusher) infrastructure and no server-side
+  audio relay. (TASK-0007's `/studio/live` uses browser WebRTC straight to
+  OpenAI with a backend-minted ephemeral key; the operator console and the
+  broadcast page sync over a browser `BroadcastChannel`. The reji browser
+  enumerates and applies physical audio devices — the server never does.)
 - No STT/TTS transcription; the realtime voice prototype plays audio only, no
   transcript. Broader voice (recorded TTS, STT pipelines) still untasked.
 - No multi-tenant / white-label concerns yet.
@@ -79,18 +81,22 @@ TASK-0001 core domain, TASK-0002 static-analysis baseline, TASK-0003 Filament
 admin, TASK-0004 episode preparation workspace, TASK-0005 vendor-neutral
 text-generation foundation (`app/AI/**`), TASK-0006 real OpenAI text adapter
 (Responses API, env-gated) + `AssembleRehearsalPrompt` + the Filament "AI
-Provası" rehearsal page. TASK-0007 adds the **first realtime feature**: an
-admin-only full-screen `/studio/live` page where the studio host and the AI
-hold an uninterrupted spoken **Turkish** debate — browser mic ↔ OpenAI
-Realtime over **WebRTC**, with the API key minted into a short-lived ephemeral
-secret by the Laravel backend (never sent to the browser). No text/transcript;
-a clean broadcast view can hide the operator controls leaving only the orb.
-**20-minute** session cap (config `STUDIO_LIVE_MAX_SECONDS`, default 1200,
-raisable to 60 min; the browser reads the value from the backend). A separate
-`RealtimeVoiceProvider` capability (`fake` default driver, `openai` in prod). See
-`.agents/architecture.md` §2f. **Prototype only** — nothing persisted; **still
-no** transcript/history, per-session spend caps, Episode/persona coupling,
-STT, studio display, avatar, or conversation engine.
+Provası" rehearsal page. TASK-0007 adds the **first realtime feature**, split
+into two same-browser layers: `/studio/live` is the **clean broadcast output**
+(orb only, no controls/text) and the Filament **"Canlı Yayın Kontrolü"** page
+(`/admin/studio-control`) is the director's console — Bağlan / bitir / mute,
+connection + remaining-time state, and **physical AI-input / AI-output device
+selectors** (enumerated and applied in the reji browser, deviceIds persisted in
+localStorage). Browser mic ↔ OpenAI Realtime over **WebRTC**, ephemeral key
+minted server-side (never in the browser); config-driven studio noise handling
+(`echoCancellation`/`noiseSuppression`/`autoGainControl` + `far_field`
+`noise_reduction` + a mild `server_vad` raise, barge-in kept). **20-minute**
+session cap (config `STUDIO_LIVE_MAX_SECONDS`, default 1200, up to 60 min; the
+browser reads it from the backend). A separate `RealtimeVoiceProvider`
+capability (`fake` default, `openai` in prod). See `.agents/architecture.md`
+§2f. **Prototype only** — nothing persisted; **still no** transcript/history,
+per-session spend caps, Episode/persona coupling, STT, studio display, avatar,
+or conversation engine.
 
 ## Environment facts
 

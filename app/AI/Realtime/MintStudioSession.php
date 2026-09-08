@@ -54,6 +54,24 @@ final readonly class MintStudioSession
             ? $webrtcUrl
             : self::FALLBACK_WEBRTC_URL;
 
-        return new StudioSession($token, $maxSeconds, $webrtcUrl);
+        return new StudioSession($token, $maxSeconds, $webrtcUrl, $this->audioConstraints());
+    }
+
+    /**
+     * getUserMedia audio constraints for the browser — sourced from config so
+     * the frontend carries no literals. Defaults on (studio setup).
+     *
+     * @return array{echoCancellation: bool, noiseSuppression: bool, autoGainControl: bool}
+     */
+    private function audioConstraints(): array
+    {
+        $raw = $this->config->get('ai.realtime.audio.constraints');
+        $raw = is_array($raw) ? $raw : [];
+
+        return [
+            'echoCancellation' => ($raw['echoCancellation'] ?? true) !== false,
+            'noiseSuppression' => ($raw['noiseSuppression'] ?? true) !== false,
+            'autoGainControl' => ($raw['autoGainControl'] ?? true) !== false,
+        ];
     }
 }

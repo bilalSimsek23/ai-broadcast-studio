@@ -62,8 +62,13 @@ final class AiServiceProvider extends ServiceProvider
         $this->app->singleton(FakeRealtimeVoiceProvider::class);
 
         $this->app->singleton(OpenAiRealtimeProvider::class, static function (Application $app): OpenAiRealtimeProvider {
-            $connection = $app->make('config')->get('ai.realtime.connections.openai', []);
+            $config = $app->make('config');
+
+            $connection = $config->get('ai.realtime.connections.openai', []);
             $connection = is_array($connection) ? $connection : [];
+
+            $turnDetection = $config->get('ai.realtime.audio.turn_detection', []);
+            $noiseReduction = $config->get('ai.realtime.audio.noise_reduction');
 
             return new OpenAiRealtimeProvider(
                 apiKey: is_string($connection['api_key'] ?? null) ? $connection['api_key'] : '',
@@ -78,6 +83,8 @@ final class AiServiceProvider extends ServiceProvider
                     : 'marin',
                 timeoutSeconds: self::positiveInt($connection['timeout'] ?? null, 15),
                 connectTimeoutSeconds: self::positiveInt($connection['connect_timeout'] ?? null, 10),
+                turnDetection: self::numericMap(is_array($turnDetection) ? $turnDetection : []),
+                noiseReduction: is_string($noiseReduction) && $noiseReduction !== '' ? $noiseReduction : null,
             );
         });
 
@@ -93,5 +100,24 @@ final class AiServiceProvider extends ServiceProvider
     private static function positiveInt(mixed $value, int $default): int
     {
         return is_int($value) && $value > 0 ? $value : $default;
+    }
+
+    /**
+     * Keep only string-keyed numeric entries (server_vad tuning from config).
+     *
+     * @param  array<array-key, mixed>  $values
+     * @return array<string, int|float>
+     */
+    private static function numericMap(array $values): array
+    {
+        $out = [];
+
+        foreach ($values as $key => $value) {
+            if (is_string($key) && (is_int($value) || is_float($value))) {
+                $out[$key] = $value;
+            }
+        }
+
+        return $out;
     }
 }

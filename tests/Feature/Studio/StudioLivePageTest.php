@@ -24,28 +24,38 @@ class StudioLivePageTest extends TestCase
         $this->get('/studio/live')->assertForbidden();
     }
 
-    public function test_an_admin_sees_the_voice_stage_with_no_transcript(): void
+    public function test_the_broadcast_output_is_only_the_orb_no_controls_no_text(): void
     {
         $this->actingAs(User::factory()->admin()->create());
 
         $response = $this->get('/studio/live')->assertOk();
 
+        // The orb canvas is the whole visible page.
         $response->assertSee('id="orb"', escape: false);
-        $response->assertSee('Bağlan');
-        $response->assertSee('Görüşmeyi bitir');
-        $response->assertSee('/studio/live/session', escape: false);
 
-        // Clean broadcast view toggle + the shared clean-shutdown path used on
-        // both "Görüşmeyi bitir" and the session time limit expiring.
-        $response->assertSee('Yayın görünümü');
-        $response->assertSee('body.clean', escape: false);
-        $response->assertSee('Süre doldu');
+        // Operator controls belong on the Filament "Canlı Yayın Kontrolü"
+        // page, never on the broadcast output: no buttons, no control DOM.
+        $response->assertDontSee('<button', escape: false);
+        $response->assertDontSee('id="controls"', escape: false);
+        $response->assertDontSee('id="connect"', escape: false);
+        $response->assertDontSee('id="hangup"', escape: false);
+        $response->assertDontSee('id="timer"', escape: false);
+        $response->assertDontSee('id="status"', escape: false);
+        $response->assertDontSee('Yayın görünümü');
+        $response->assertDontSee('Görüşmeyi bitir');
 
-        // No hardcoded session length in the page — it comes from the backend.
+        // Controlled over a same-origin BroadcastChannel — no server relay.
+        $response->assertSee("new BroadcastChannel('studio-live')", escape: false);
+
+        // Session length still comes from the backend, not a literal.
         $response->assertSee('startTimer(s.session_max_seconds)', escape: false);
         $response->assertDontSee('|| 600', escape: false);
 
-        // Rehearsal/transcript UI must not be present, and no credential leaks.
+        // Device application happens here (WebRTC owner), driven by the control page.
+        $response->assertSee('{ exact: inputDeviceId }', escape: false);
+        $response->assertSee('setSinkId', escape: false);
+
+        // No transcript, no credential leak.
         $response->assertDontSee('transcript');
         $response->assertDontSee('OPENAI_API_KEY');
         $response->assertDontSee('sk-');

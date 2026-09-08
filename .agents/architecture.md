@@ -139,13 +139,16 @@ or the deletion policy. Invariants live in the models/DB; the UI mirrors them:
 TASK-0006: the vendor-neutral *text* foundation (§2d), a **real OpenAI adapter**
 behind the contract, a rehearsal **prompt-assembly** service, and a Filament
 **"AI Provası"** page that generates one persona response from an Episode's
-editorial data (§2e). TASK-0007 adds a **realtime voice prototype** — the
-admin-only `/studio/live` page: browser mic ↔ OpenAI Realtime (Turkish),
-WebRTC + backend-minted ephemeral key, orb-only clean view, 20-min
-config-driven session cap (§2f). Still missing:
-STT/TTS transcription, studio display / avatar, conversation history/transcript
-persistence, per-session spend caps, and coupling the realtime session to an
-Episode's persona + brief. Persona binding columns still hold logical keys only.
+editorial data (§2e). TASK-0007 adds a **realtime voice prototype** — an
+admin-only clean broadcast page (`/studio/live`, orb only) plus a Filament
+operator console (`/admin/studio-control`, transport + mute + physical audio
+device selectors), synced over a browser `BroadcastChannel`; browser mic ↔
+OpenAI Realtime (Turkish) over WebRTC with a backend-minted ephemeral key,
+config-driven studio noise tuning, 20-min config session cap (§2f). Still
+missing: STT/TTS transcription, studio display / avatar, conversation
+history/transcript persistence, per-session spend caps, and coupling the
+realtime session to an Episode's persona + brief. Persona binding columns still
+hold logical keys only.
 
 **Not yet built:** everything in the bullet above, plus a public/viewer web
 app, queue workers config, CI.
@@ -376,21 +379,28 @@ Double-submit guarded via `wire:target` + `wire:loading.attr="disabled"`.
 
 ## 2f. Studio live realtime voice prototype — as built (TASK-0007)
 
-The first realtime feature. A full-screen `/studio/live` page for an
-uninterrupted spoken **Turkish** debate between the studio host and the AI —
-mic in, voice out, a pulsing orb, **no text / no transcript**. This is where
-CLAUDE.md §2.9 "no premature realtime infra" is deliberately lifted; it stays
-minimal (WebRTC only, no realtime server, no broadcasting).
+The first realtime feature — an uninterrupted spoken **Turkish** debate between
+the studio host and the AI. Split into two same-browser layers:
+**`/studio/live`** is the clean broadcast output — mic in, voice out, a pulsing
+orb, **and nothing else on screen** (no controls, status, counter or text);
+**`/admin/studio-control`** (Filament page "Canlı Yayın Kontrolü") is the
+director's console. This is where CLAUDE.md §2.9 "no premature realtime infra"
+is deliberately lifted; it stays minimal — WebRTC only, no realtime server, no
+broadcasting; the two layers sync over a browser `BroadcastChannel`, never the
+server.
 
 **Decisions:** standalone (no Episode/AiPersona coupling yet) · admin-only ·
-WebRTC + ephemeral key · 20-minute auto-end (config, up to 60).
+WebRTC + ephemeral key · 20-minute auto-end (config, up to 60) · physical audio
+device discovery + deviceId management entirely in the reji browser.
 
 ```
-Browser mic  ─▶  RTCPeerConnection  ──(SDP, Bearer=ephemeral secret)──▶  OpenAI Realtime  ─▶  <audio> + AnalyserNode ─▶ orb
-     ▲                                                                        ▲
-     │   POST /studio/live/session (admin, throttled)                         │
-     └── StudioLiveController → MintStudioSession → RealtimeVoiceProvider ─────┘
-                                    (OpenAiRealtimeProvider mints the ephemeral secret from the standing key)
+/admin/studio-control  ──BroadcastChannel('studio-live')──►  /studio/live  (owns mic + RTCPeerConnection + <audio>)
+ (device selectors, transport,        cmd / devices                │  getUserMedia({deviceId:{exact}, EC/NS/AGC})
+  mute, state readouts; no media)  ◄──── state (1s heartbeat) ─────┤  RTCPeerConnection ──(SDP, Bearer=ephemeral)──► OpenAI Realtime
+  deviceIds in localStorage                                        │  <audio>.setSinkId(outputId) ─► AnalyserNode ─► orb
+                                                                   └── POST /studio/live/session (admin, throttled)
+                                                                         → MintStudioSession → RealtimeVoiceProvider
+                                                                           (OpenAiRealtimeProvider mints the ephemeral secret)
 ```
 
 **Capability (separate from §2d text):**
@@ -400,43 +410,61 @@ Browser mic  ─▶  RTCPeerConnection  ──(SDP, Bearer=ephemeral secret)─�
   `model`, `voice`. Constructor **rejects a `sk-…` value** (leak guard);
   `toArray()` never carries a standing credential.
 - `OpenAiRealtimeProvider` (`app/AI/Providers/OpenAi/`) — `POST
-  {base}/realtime/client_secrets`, standing key as Bearer, `session` body
-  (`type`/`model`/`instructions`/`audio.output.voice`); parses flat and nested
-  secret shapes; `retry(1)` + timeouts; same `ProviderException` family as
-  §2e (no key/URL/free-text in messages). The standing key never leaves the
-  process.
+  {base}/realtime/client_secrets`, standing key as Bearer; `session` body
+  carries `type`/`model`/`instructions`/`audio.output.voice` and, when
+  configured, `audio.input` — a `noise_reduction` profile + a MILD `server_vad`
+  raise (`create_response`/`interrupt_response` always on, so barge-in works).
+  Parses flat + nested secret shapes; `retry(1)` + timeouts; same
+  `ProviderException` family as §2e. The standing key never leaves the process.
 - `FakeRealtimeVoiceProvider` (`app/AI/Providers/Fake/`) — offline default
   driver; deterministic `ek_fake_…` secret.
 - `MintStudioSession` + `StudioSession` (`app/AI/Realtime/`) — thin service:
-  reads the standing Turkish brief + session cap
+  reads the standing brief + session cap
   (`config('ai.realtime.session_max_seconds')`, default 1200s, clamped
-  [30, 3600]) + WebRTC URL, calls the bound provider, returns
-  `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url}`.
-  The session length lives ONLY here — the browser uses the value from this
-  response, never its own copy.
+  [30, 3600]) + WebRTC URL + getUserMedia constraints, calls the bound
+  provider, returns `{client_secret, expires_at, model, voice,
+  session_max_seconds, webrtc_url, audio_constraints}`. Session length +
+  constraints live ONLY here — the browser uses the response values, never its
+  own copy.
 - `AiServiceProvider` binds all three; driver from `config('ai.realtime.driver')`
-  (`fake` default, `openai` in prod).
+  (`fake` default, `openai` in prod), passing `config('ai.realtime.audio.*')`
+  tuning to the OpenAI adapter.
 
-**HTTP** (`routes/web.php`, `App\Http\Controllers\StudioLiveController`,
-`App\Http\Middleware\EnsureStudioOperator`):
-`GET /studio/live` (full-screen Blade) and `POST /studio/live/session`
-(`throttle:12,1`, `ProviderException` → `report()` + generic `503
-{error:"realtime_unavailable"}`). Both admin-gated — guest → `/admin/login`
-(or 401 JSON), non-admin → 403.
+**HTTP** (`routes/web.php`, `StudioLiveController`, `EnsureStudioOperator`):
+`GET /studio/live` (clean broadcast Blade) and `POST /studio/live/session`
+(`throttle:12,1`, `ProviderException` → `report()` + generic `503`). Both
+admin-gated. The Filament `App\Filament\Pages\StudioControl`
+(`/admin/studio-control`) is auto-discovered and panel-gated + `canAccess()`.
 
-**Frontend** — `resources/views/studio/live.blade.php`, standalone dark page,
-inline vanilla JS, no build step: `getUserMedia` → `RTCPeerConnection` → SDP
-exchange with the ephemeral secret; remote audio drives a `<canvas>` orb via an
-`AnalyserNode`; countdown length = the response's `session_max_seconds` (no
-literal in the page); at zero, one `hangup()` path (also used by `Görüşmeyi
-bitir`) closes the peer, stops playback and releases the mic. **Clean broadcast
-view** (`Yayın görünümü` → `body.clean`) hides controls/status/countdown —
-orb only — without touching the timer or auto-close; `Esc`/click returns.
-Turkish status line.
+**Broadcast layer** (`resources/views/studio/live.blade.php`) — a `<canvas>`
+orb + hidden `<audio>` + inline vanilla JS, nothing else visible. Sole owner of
+`getUserMedia` / `RTCPeerConnection` / the sink. Listens on
+`BroadcastChannel('studio-live')` for `cmd` (connect/hangup/mute/unmute) and
+`devices` (input/output deviceId); publishes `state` (connected, muted,
+remainingSeconds, status, inputActive, outputSupported, deviceError,
+deviceLost) every second (heartbeat) + on change. `getUserMedia` with a chosen
+`deviceId:{exact}` that fails → `deviceError`, **no silent default fallback**;
+`devicechange` losing the live input → `deviceLost`. `setSinkId(outputId)` when
+supported. Mute = `track.enabled=false` on the selected input track only.
+Countdown = `session_max_seconds` from the response (no literal); one
+`hangup()` (time limit + operator end) closes the peer, stops playback, stops +
+releases the mic. Orb: `min(70vw,70vh)`, contained by construction (max glow
+`S*0.49`), no CSS drop-shadow.
 
-**Config** — `config/ai.php` → `ai.realtime` (`driver`, `session_max_seconds`,
-`webrtc_url`, `instructions`, `drivers`, `connections.openai` reusing
-`OPENAI_API_KEY` / `OPENAI_BASE_URL`). All env keys in `.env.example`.
+**Operator layer** (`resources/views/filament/pages/studio-control.blade.php`,
+Alpine) — holds no media: `enumerateDevices()` for `audioinput` / `audiooutput`
+(same-name disambiguation, permission-grant affordance), the **AI Ses Girişi** /
+**AI Ses Çıkışı** selectors, "Ses cihazlarını yenile" + `ondevicechange`
+auto-refresh, `localStorage` deviceId persistence (per reji machine, **never
+server config**), the four transport/mute buttons, and Bağlantı / Mikrofon /
+Kalan süre / Durum readouts + `deviceLost` critical banner.
+
+**Config** — `config/ai.php` → `ai.realtime`: `driver`, `session_max_seconds`,
+`webrtc_url`, `instructions`, **`audio`** (`constraints.{echoCancellation,
+noiseSuppression,autoGainControl}`, `noise_reduction`,
+`turn_detection.{threshold,prefix_padding_ms,silence_duration_ms}`), `drivers`,
+`connections.openai`. Every key `env()`-overridable and in `.env.example`.
+Physical deviceIds are never here — browser localStorage only.
 
 ## 3. Key boundaries
 
@@ -456,7 +484,9 @@ Domain code ──▶ GenerateText ──▶ LogicalModelResolver ──▶ Text
   `ProviderRequestException` translation hierarchy, `AssembleRehearsalPrompt`,
   the "AI Provası" rehearsal page, and — separately — the realtime voice
   capability (`RealtimeVoiceProvider` + `OpenAiRealtimeProvider` /
-  `FakeRealtimeVoiceProvider` + `MintStudioSession` + `/studio/live`).
+  `FakeRealtimeVoiceProvider` + `MintStudioSession`, the `/studio/live` clean
+  broadcast page and the `StudioControl` Filament operator console, synced over
+  a browser `BroadcastChannel` — no server realtime/audio relay).
   Characters store a **logical name**, never a vendor.
 - **Not built yet:** other vendor adapters; `ProviderRateLimitException` /
   `ProviderContentFilteredException` (429/filter are `ProviderRequestException`

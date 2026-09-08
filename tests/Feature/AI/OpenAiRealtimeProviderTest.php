@@ -162,4 +162,53 @@ class OpenAiRealtimeProviderTest extends TestCase
 
         $this->provider()->createClientSession($this->request());
     }
+
+    public function test_without_configured_tuning_the_session_has_no_audio_input_block(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
+
+        $this->provider()->createClientSession($this->request());
+
+        Http::assertSent(fn (Request $request): bool => ! array_key_exists('input', $request->data()['session']['audio']));
+    }
+
+    public function test_configured_studio_noise_tuning_is_sent_in_the_session_audio_input(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
+
+        $provider = new OpenAiRealtimeProvider(
+            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10,
+            turnDetection: ['threshold' => 0.6, 'prefix_padding_ms' => 300, 'silence_duration_ms' => 500],
+            noiseReduction: 'far_field',
+        );
+
+        $provider->createClientSession($this->request());
+
+        Http::assertSent(function (Request $request): bool {
+            $input = $request->data()['session']['audio']['input'];
+
+            return $input['noise_reduction']['type'] === 'far_field'
+                && $input['turn_detection']['type'] === 'server_vad'
+                && $input['turn_detection']['threshold'] === 0.6
+                && $input['turn_detection']['silence_duration_ms'] === 500
+                && $input['turn_detection']['prefix_padding_ms'] === 300
+                // barge-in stays on so the host can interrupt the AI
+                && $input['turn_detection']['interrupt_response'] === true
+                && $input['turn_detection']['create_response'] === true;
+        });
+    }
+
+    public function test_noise_reduction_off_is_not_sent(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
+
+        $provider = new OpenAiRealtimeProvider(
+            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10,
+            noiseReduction: 'off',
+        );
+
+        $provider->createClientSession($this->request());
+
+        Http::assertSent(fn (Request $request): bool => ! array_key_exists('input', $request->data()['session']['audio']));
+    }
 }

@@ -5,89 +5,124 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="robots" content="noindex">
-    <title>Canlı Stüdyo — AI Broadcast Studio</title>
+    <title>Canlı Stüdyo</title>
     <style>
         :root { color-scheme: dark; }
         * { box-sizing: border-box; }
         html, body { height: 100%; margin: 0; }
+        /* The broadcast output. Steady state is ONLY the orb — no controls,
+           no status, no counter, no text of any kind. Operator controls live
+           on the Filament "Canlı Yayın Kontrolü" page. */
         body {
-            background: radial-gradient(1200px 800px at 50% 40%, #0b1622, #05080d 70%);
-            color: #e8f0fa;
-            font: 500 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            gap: 2rem; overflow: hidden; -webkit-user-select: none; user-select: none;
+            background: radial-gradient(1400px 900px at 50% 45%, #0b1622, #04070c 72%);
+            display: grid; place-items: center; overflow: hidden;
+            cursor: none;
         }
-        #stage { position: relative; display: grid; place-items: center; }
-        #orb { display: block; filter: drop-shadow(0 0 40px rgba(90, 160, 240, .35)); }
-        #status {
-            position: absolute; bottom: -2.75rem; left: 50%; transform: translateX(-50%);
-            white-space: nowrap; font-size: .95rem; letter-spacing: .02em; color: #9fb6cf;
-        }
-        #timer {
-            position: absolute; top: -2.75rem; left: 50%; transform: translateX(-50%);
-            font-variant-numeric: tabular-nums; font-size: .95rem; color: #7f97b0;
-        }
-        #controls { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; margin-top: 2.5rem; }
-        button {
-            appearance: none; border: 1px solid rgba(150, 190, 240, .35);
-            background: rgba(30, 60, 100, .35); color: #e8f0fa;
-            padding: .8rem 1.6rem; border-radius: 999px; font: inherit; cursor: pointer;
-            transition: background .15s ease, opacity .15s ease;
-        }
-        button:hover { background: rgba(45, 85, 140, .5); }
-        button:disabled { opacity: .5; cursor: default; }
-        #hangup { border-color: rgba(240, 150, 150, .4); background: rgba(120, 40, 40, .35); }
-        #hangup:hover { background: rgba(150, 55, 55, .5); }
-        #broadcast { border-color: rgba(150, 190, 240, .25); background: rgba(20, 40, 70, .3); }
-        #hint {
-            position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
-            font-size: .8rem; letter-spacing: .03em; color: #7c90a6;
-            background: rgba(5, 10, 18, .6); padding: .4rem .9rem; border-radius: 999px;
-            pointer-events: none;
-        }
-        /* Clean broadcast view: only the orb. Operator controls, status text and
-           the countdown are hidden — but the session time limit and its
-           auto-close keep running. */
-        body.clean { cursor: none; }
-        body.clean #controls,
-        body.clean #status,
-        body.clean #timer { display: none !important; }
-        [hidden] { display: none !important; }
+        #orb { display: block; }
     </style>
 </head>
 <body>
-    <div id="stage">
-        <canvas id="orb" aria-hidden="true"></canvas>
-        <span id="timer" hidden>--:--</span>
-        <p id="status" role="status" aria-live="polite">Hazır</p>
-    </div>
-
-    <div id="controls">
-        <button id="connect" type="button">Bağlan</button>
-        <button id="broadcast" type="button" hidden>Yayın görünümü</button>
-        <button id="hangup" type="button" hidden>Görüşmeyi bitir</button>
-    </div>
-
-    <p id="hint" hidden>Kontrollere dönmek için Esc'e basın</p>
-
-    <audio id="sink" autoplay hidden></audio>
+    <canvas id="orb" aria-hidden="true"></canvas>
+    <audio id="sink" autoplay playsinline></audio>
 
     <script>
         (function () {
             'use strict';
+
             var endpoint = "{{ $sessionEndpoint }}";
             var csrf = document.querySelector('meta[name=csrf-token]').getAttribute('content');
             var $ = function (id) { return document.getElementById(id); };
             var dpr = window.devicePixelRatio || 1;
 
             var pc = null, micStream = null, audioCtx = null, analyser = null;
-            var timerId = null, hintTimer = null, speaking = 0;
+            var timerId = null, beatId = null, speaking = 0;
+            var muted = false, remainingSeconds = null, status = 'Hazır';
+            var inputDeviceId = null, outputDeviceId = null;
+            var activeInputId = null;
+            var outputSupported = ('setSinkId' in HTMLMediaElement.prototype);
+            var deviceError = false, deviceLost = false;
             var freq = new Uint8Array(128);
 
-            function setStatus(t) { $('status').textContent = t; }
+            var bc = null;
+            try { bc = new BroadcastChannel('studio-live'); } catch (e) { bc = null; }
+
+            function publish() {
+                if (!bc) return;
+                bc.postMessage({
+                    type: 'state',
+                    connected: !!pc, muted: muted,
+                    remainingSeconds: remainingSeconds, status: status,
+                    inputActive: activeInputId, outputSupported: outputSupported,
+                    deviceError: deviceError, deviceLost: deviceLost
+                });
+            }
+            function setStatus(t) { status = t; publish(); }
+
+            if (bc) {
+                bc.onmessage = function (e) {
+                    var d = e.data || {};
+                    if (d.type === 'hello') { publish(); return; }
+                    if (d.type === 'devices') {
+                        inputDeviceId = d.inputId || null;
+                        outputDeviceId = d.outputId || null;
+                        applyOutputDevice();
+                        return;
+                    }
+                    if (d.type !== 'cmd') return;
+                    if (d.cmd === 'connect') connect();
+                    else if (d.cmd === 'hangup') hangup('Görüşme bitti');
+                    else if (d.cmd === 'mute') setMuted(true);
+                    else if (d.cmd === 'unmute') setMuted(false);
+                };
+            }
+
+            // Heartbeat: lets the control page know the broadcast screen is open.
+            beatId = setInterval(publish, 2000);
+            publish();
+            if (bc) bc.postMessage({ type: 'hello' });
+
+            // Autoplay unlock — one click anywhere on the broadcast screen.
+            document.addEventListener('click', function () {
+                try { $('sink').play().catch(function () {}); } catch (e) {}
+                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+            });
+
+            // A used input device vanishing mid-broadcast is critical.
+            if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
+                navigator.mediaDevices.addEventListener('devicechange', function () {
+                    if (!pc || !activeInputId) return;
+                    navigator.mediaDevices.enumerateDevices().then(function (list) {
+                        var present = list.some(function (d) {
+                            return d.kind === 'audioinput' && d.deviceId === activeInputId;
+                        });
+                        if (!present) { deviceLost = true; setStatus('AI ses girişi kayboldu'); }
+                    }).catch(function () {});
+                });
+            }
+
+            function audioConstraints(base) {
+                var c = {};
+                if (base && typeof base === 'object') {
+                    if ('echoCancellation' in base) c.echoCancellation = base.echoCancellation;
+                    if ('noiseSuppression' in base) c.noiseSuppression = base.noiseSuppression;
+                    if ('autoGainControl' in base) c.autoGainControl = base.autoGainControl;
+                }
+                if (inputDeviceId) c.deviceId = { exact: inputDeviceId };
+                return Object.keys(c).length ? c : true;
+            }
+
+            function applyOutputDevice() {
+                if (!outputSupported || !outputDeviceId) return;
+                try {
+                    $('sink').setSinkId(outputDeviceId).catch(function () {
+                        setStatus('AI ses çıkışı ayarlanamadı');
+                    });
+                } catch (e) {}
+            }
 
             async function connect() {
-                $('connect').disabled = true;
+                if (pc) return;
+                deviceError = false; deviceLost = false;
                 setStatus('Bağlanıyor…');
 
                 var s;
@@ -96,58 +131,60 @@
                         method: 'POST',
                         headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' }
                     });
-                    if (!r.ok) throw new Error('session');
+                    if (!r.ok) throw 0;
                     s = await r.json();
-                } catch (e) {
-                    setStatus('Oturum başlatılamadı. Tekrar deneyin.');
-                    $('connect').disabled = false;
-                    return;
-                }
+                } catch (e) { setStatus('Oturum başlatılamadı'); return; }
 
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(s.audio_constraints) });
                 } catch (e) {
-                    setStatus('Mikrofon izni gerekli.');
-                    $('connect').disabled = false;
+                    // Do NOT silently fall back to the default device.
+                    if (inputDeviceId && (e && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError'))) {
+                        deviceError = true;
+                        setStatus('Seçilen AI ses girişi açılamadı — cihazı yeniden seçin');
+                    } else {
+                        setStatus('Mikrofon izni yok');
+                    }
                     return;
                 }
 
+                var track = micStream.getAudioTracks()[0];
+                activeInputId = (track.getSettings && track.getSettings().deviceId) || inputDeviceId || null;
+                if (muted) track.enabled = false;
+
                 pc = new RTCPeerConnection();
-                pc.addTrack(micStream.getAudioTracks()[0], micStream);
+                pc.addTrack(track, micStream);
                 pc.addTransceiver('audio', { direction: 'recvonly' });
-                pc.ontrack = function (e) { $('sink').srcObject = e.streams[0]; listen(e.streams[0]); };
-                pc.oniceconnectionstatechange = function () {
-                    var st = pc ? pc.iceConnectionState : 'closed';
-                    if (st === 'connected' || st === 'completed') setStatus('Bağlı — konuşabilirsiniz');
-                    if (st === 'failed' || st === 'disconnected' || st === 'closed') hangup('Bağlantı kesildi');
+                pc.ontrack = function (e) {
+                    var sink = $('sink');
+                    sink.srcObject = e.streams[0];
+                    applyOutputDevice();
+                    sink.play().then(function () { setStatus('Yayında'); })
+                               .catch(function () { setStatus('Yayın ekranına tıklayın'); });
+                    listen(e.streams[0]);
                 };
-                pc.createDataChannel('oai-events');
+                pc.oniceconnectionstatechange = function () {
+                    if (!pc) return;
+                    var st = pc.iceConnectionState;
+                    if (st === 'connected' || st === 'completed') setStatus('Yayında');
+                    if (st === 'failed' || st === 'disconnected') hangup('Bağlantı kesildi');
+                };
 
                 var offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
 
                 var answer;
                 try {
-                    var sdpRes = await fetch(s.webrtc_url + '?model=' + encodeURIComponent(s.model), {
-                        method: 'POST',
-                        body: offer.sdp,
+                    var sdp = await fetch(s.webrtc_url + '?model=' + encodeURIComponent(s.model), {
+                        method: 'POST', body: offer.sdp,
                         headers: { 'Authorization': 'Bearer ' + s.client_secret, 'Content-Type': 'application/sdp' }
                     });
-                    if (!sdpRes.ok) throw new Error('sdp');
-                    answer = await sdpRes.text();
-                } catch (e) {
-                    hangup('Bağlantı kurulamadı');
-                    return;
-                }
+                    if (!sdp.ok) throw 0;
+                    answer = await sdp.text();
+                } catch (e) { hangup('Bağlantı kurulamadı'); return; }
 
                 await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-
-                $('connect').hidden = true;
-                $('hangup').hidden = false;
-                $('broadcast').hidden = false;
-                // The only source of truth for the session length is the backend
-                // config (config('ai.realtime.session_max_seconds')); the browser
-                // never carries its own copy.
+                publish();
                 startTimer(s.session_max_seconds);
             }
 
@@ -161,111 +198,99 @@
                 src.connect(analyser);
             }
 
+            // Mute/unmute acts on the SELECTED input track only; the WebRTC
+            // session and the AI session are untouched.
+            function setMuted(m) {
+                muted = !!m;
+                if (micStream) micStream.getAudioTracks().forEach(function (t) { t.enabled = !muted; });
+                setStatus(muted ? 'Mikrofon sessiz' : 'Yayında');
+            }
+
             function startTimer(total) {
                 total = Number(total);
                 if (!isFinite(total) || total <= 0) { hangup('Yapılandırma hatası'); return; }
-
-                var left = total;
-                $('timer').hidden = false;
+                remainingSeconds = Math.round(total);
                 var tick = function () {
-                    var m = Math.floor(left / 60), sec = left % 60;
-                    $('timer').textContent = m + ':' + (sec < 10 ? '0' : '') + sec;
-                    if (left <= 0) { hangup('Süre doldu'); return; }
-                    left -= 1;
+                    publish();
+                    if (remainingSeconds <= 0) { hangup('Süre doldu'); return; }
+                    remainingSeconds -= 1;
                 };
                 tick();
                 timerId = setInterval(tick, 1000);
             }
 
-            // Single clean-shutdown path — used both on "Görüşmeyi bitir" and on
-            // the session time limit expiring: close the peer connection, stop
-            // playback, release the microphone, restore the operator view.
+            // The single clean-shutdown path — used by the session time limit
+            // AND by the operator end command: close the peer connection, stop
+            // playback, release the microphone.
             function hangup(reason) {
                 if (timerId) { clearInterval(timerId); timerId = null; }
-                if (pc) { try { pc.close(); } catch (e) {} pc = null; }
-                if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+                if (pc) {
+                    pc.oniceconnectionstatechange = null; pc.ontrack = null;
+                    try { pc.close(); } catch (e) {}
+                    pc = null;
+                }
+                if (micStream) { micStream.getAudioTracks().forEach(function (t) { t.stop(); }); micStream = null; }
                 if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
                 analyser = null;
-
                 var sink = $('sink');
                 try { sink.pause(); } catch (e) {}
                 sink.srcObject = null;
-
-                exitClean();
-                $('timer').hidden = true;
-                $('broadcast').hidden = true;
-                $('hangup').hidden = true;
-                $('connect').hidden = false;
-                $('connect').disabled = false;
+                muted = false; remainingSeconds = null; activeInputId = null;
                 setStatus(reason || 'Görüşme bitti');
             }
 
-            // --- clean broadcast view -----------------------------------------
-            function peekHint() {
-                $('hint').hidden = false;
-                if (hintTimer) clearTimeout(hintTimer);
-                hintTimer = setTimeout(function () { $('hint').hidden = true; }, 2200);
-            }
-            function enterClean() { document.body.classList.add('clean'); peekHint(); }
-            function exitClean() {
-                document.body.classList.remove('clean');
-                if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
-                $('hint').hidden = true;
-            }
-            function isClean() { return document.body.classList.contains('clean'); }
-
-            $('broadcast').addEventListener('click', function (e) { e.stopPropagation(); enterClean(); });
-            document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isClean()) exitClean(); });
-            document.addEventListener('click', function () { if (isClean()) exitClean(); });
-            document.addEventListener('mousemove', function () { if (isClean()) peekHint(); });
-
-            // --- orb ---------------------------------------------------------
+            // --- orb --------------------------------------------------------
             var canvas = $('orb'), g2d = canvas.getContext('2d');
+
+            // Contained by construction: at MAX amplitude the outermost glow is
+            // exactly S * SAFE (< half the canvas), so nothing is ever clipped.
+            var PULSE = 0.32, GLOW = 1.6, SAFE = 0.49;
+
             function resize() {
-                var d = Math.min(window.innerWidth, window.innerHeight) * 0.62;
-                canvas.width = canvas.height = Math.round(d * dpr);
-                canvas.style.width = canvas.style.height = Math.round(d) + 'px';
+                var css = Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.70);
+                canvas.style.width = canvas.style.height = css + 'px';
+                canvas.width = canvas.height = Math.max(1, Math.round(css * dpr));
             }
             window.addEventListener('resize', resize);
             resize();
 
             function draw(t) {
-                var w = canvas.width, h = canvas.height, cx = w / 2, cy = h / 2;
-                g2d.clearRect(0, 0, w, h);
+                var S = canvas.width, c = S / 2, TAU = Math.PI * 2;
+                g2d.clearRect(0, 0, S, S);
 
-                var amp = 0;
+                var a = 0;
                 if (analyser) {
                     analyser.getByteFrequencyData(freq);
                     var sum = 0;
                     for (var i = 0; i < freq.length; i++) sum += freq[i];
-                    amp = (sum / freq.length) / 255;
+                    a = (sum / freq.length) / 255;
                 }
-                speaking += (amp - speaking) * 0.15;
+                speaking += (a - speaking) * 0.15;
+                var sp = Math.max(0, Math.min(0.97, speaking));
+                var wob = 0.03 * (0.5 + 0.5 * Math.sin(t / 1100));
+                var amp = Math.min(1, sp + wob);
 
-                var idle = 0.5 + 0.5 * Math.sin(t / 900);
-                var base = w * 0.30;
-                var r = base * (1 + speaking * 0.85) + idle * base * 0.05;
-                var TAU = Math.PI * 2;
+                var maxCore = S * SAFE / GLOW;
+                var baseCore = maxCore / (1 + PULSE);
+                var core = baseCore * (1 + amp * PULSE);   // <= maxCore
+                var glowR = core * GLOW;                    // <= S * SAFE
 
-                var grad = g2d.createRadialGradient(cx, cy, r * 0.15, cx, cy, r * 1.7);
-                grad.addColorStop(0, 'rgba(120, 190, 255, ' + (0.32 + speaking * 0.5) + ')');
-                grad.addColorStop(1, 'rgba(120, 190, 255, 0)');
+                var grad = g2d.createRadialGradient(c, c, core * 0.12, c, c, glowR);
+                grad.addColorStop(0, 'rgba(120,190,255,' + (0.30 + sp * 0.5) + ')');
+                grad.addColorStop(1, 'rgba(120,190,255,0)');
                 g2d.fillStyle = grad;
-                g2d.beginPath(); g2d.arc(cx, cy, r * 1.7, 0, TAU); g2d.fill();
+                g2d.beginPath(); g2d.arc(c, c, glowR, 0, TAU); g2d.fill();
 
-                g2d.fillStyle = 'rgba(190, 225, 255, ' + (0.10 + speaking * 0.30) + ')';
-                g2d.beginPath(); g2d.arc(cx, cy, r * 0.78, 0, TAU); g2d.fill();
+                g2d.fillStyle = 'rgba(190,225,255,' + (0.10 + sp * 0.28) + ')';
+                g2d.beginPath(); g2d.arc(c, c, core * 0.80, 0, TAU); g2d.fill();
 
-                g2d.strokeStyle = 'rgba(185, 222, 255, ' + (0.45 + speaking * 0.45) + ')';
-                g2d.lineWidth = Math.max(2, w * 0.006);
-                g2d.beginPath(); g2d.arc(cx, cy, r, 0, TAU); g2d.stroke();
+                g2d.strokeStyle = 'rgba(185,222,255,' + (0.42 + sp * 0.45) + ')';
+                g2d.lineWidth = Math.max(2, S * 0.005);
+                g2d.beginPath(); g2d.arc(c, c, core, 0, TAU); g2d.stroke();
 
                 requestAnimationFrame(draw);
             }
             requestAnimationFrame(draw);
-
-            $('connect').addEventListener('click', connect);
-            $('hangup').addEventListener('click', function () { hangup('Görüşme bitti'); });
         })();
     </script>
 </body>

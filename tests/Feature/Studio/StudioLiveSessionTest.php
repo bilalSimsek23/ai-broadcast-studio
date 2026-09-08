@@ -60,10 +60,28 @@ class StudioLiveSessionTest extends TestCase
 
         $response = $this->postJson('/studio/live/session')->assertOk();
 
-        $response->assertJsonStructure(['client_secret', 'expires_at', 'model', 'voice', 'session_max_seconds', 'webrtc_url']);
+        $response->assertJsonStructure([
+            'client_secret', 'expires_at', 'model', 'voice', 'session_max_seconds', 'webrtc_url',
+            'audio_constraints' => ['echoCancellation', 'noiseSuppression', 'autoGainControl'],
+        ]);
+        // getUserMedia constraints come from config, not a frontend literal.
+        $response->assertJsonPath('audio_constraints.echoCancellation', true);
+        $response->assertJsonPath('audio_constraints.noiseSuppression', true);
+        $response->assertJsonPath('audio_constraints.autoGainControl', true);
         $this->assertStringStartsWith('ek_fake_', (string) $response->json('client_secret'));
         $this->assertStringNotContainsString(self::STANDING_KEY, $response->getContent() ?: '');
         Http::assertNothingSent();
+    }
+
+    public function test_getusermedia_constraints_are_configurable(): void
+    {
+        config()->set('ai.realtime.audio.constraints.noiseSuppression', false);
+        $this->actingAsAdmin();
+
+        $this->postJson('/studio/live/session')
+            ->assertOk()
+            ->assertJsonPath('audio_constraints.noiseSuppression', false)
+            ->assertJsonPath('audio_constraints.echoCancellation', true);
     }
 
     public function test_the_default_session_length_is_twenty_minutes(): void

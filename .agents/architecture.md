@@ -454,14 +454,21 @@ releases the mic. Orb: `min(70vw,70vh)`, contained by construction (max glow
 `S*0.49`), no CSS drop-shadow.
 
 **Operator layer** (`resources/views/filament/pages/studio-control.blade.php`,
-Alpine) — holds no media: `enumerateDevices()` for `audioinput` / `audiooutput`
+Alpine) — holds no media. Built with Filament's own `fi-*` Blade components
+(`<x-filament::section>` / `badge` / `button` / `input.wrapper` + `input.select`)
+so it is styled by Filament's shipped stylesheet **without** the app's Vite /
+Tailwind build (panel pages don't load `resources/css/app.css`); a small
+page-scoped plain-CSS `<style>` handles the wide 2-column desktop layout
+(`$maxContentWidth = Width::SevenExtraLarge`), the 3 status tiles and the
+alerts. It provides `enumerateDevices()` for `audioinput` / `audiooutput`
 (same-name disambiguation, permission-grant affordance), the **AI Ses Girişi** /
 **AI Ses Çıkışı** selectors + an **AI Sesi** voice picker (options from
 `config('ai.realtime.voices')`, default `cedar` / male, disabled while
-connected), "Ses cihazlarını yenile" + `ondevicechange` auto-refresh,
-`localStorage` deviceId + voice persistence (per reji machine, **never server
-config**), the four transport/mute buttons, and Bağlantı / Mikrofon / Kalan
-süre / AI sesi / Durum readouts + `deviceLost` critical banner.
+connected), "Cihazları Yenile" + `ondevicechange` auto-refresh, `localStorage`
+deviceId + voice persistence (per reji machine, **never server config**), the
+four transport/mute buttons, a typed connection badge, 3 status tiles
+(Bağlantı / Mikrofon / Kalan süre), and a "Yayın Ekranı" banner +
+`deviceLost` critical alert.
 
 **Config** — `config/ai.php` → `ai.realtime`: `driver`, `session_max_seconds`,
 `webrtc_url`, `instructions`, **`voices`** (allow-list for the picker; default

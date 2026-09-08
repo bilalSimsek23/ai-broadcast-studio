@@ -1,149 +1,296 @@
 <x-filament-panels::page>
-    <div
-        x-data="studioControl"
-        x-cloak
-        class="mx-auto w-full max-w-2xl space-y-6"
-    >
-        {{-- Broadcast screen liveness --}}
-        <div
-            class="rounded-lg border px-4 py-3 text-sm"
-            :class="broadcastAlive
-                ? 'border-green-300 bg-green-50 text-green-800 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300'
-                : 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300'"
-        >
-            <span x-show="broadcastAlive">Yayın ekranı bağlı.</span>
-            <span x-show="!broadcastAlive">
-                Yayın ekranı kapalı — bu tarayıcıda
-                <a href="/studio/live" target="_blank" class="font-semibold underline">/studio/live</a>
-                sekmesini açın (yayın çıkışında).
-            </span>
-        </div>
+    {{--
+        Page-specific layout CSS. Plain CSS (not Tailwind utilities) so it does
+        NOT depend on the app's Vite/Tailwind build — Filament panel pages load
+        Filament's own compiled stylesheet, not resources/css/app.css. All
+        card / badge / button / select chrome comes from Filament's `fi-*`
+        component classes; this only does grid/spacing/tiles.
+    --}}
+    <style>
+        .sc-root { display: grid; gap: 1.5rem; }
+        .sc-topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+        .sc-topbar__caption { font-size: .8125rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; opacity: .5; }
+        .sc-topbar__badges { display: flex; gap: .5rem; }
 
-        {{-- Critical device alerts --}}
-        <div x-show="deviceLost" x-cloak
-             class="rounded-lg border border-red-400 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
-            KRİTİK: Yayında kullanılan AI ses girişi kayboldu. Cihazı yeniden takın/seçin ya da yayını durdurun.
-        </div>
-        <div x-show="deviceError" x-cloak
-             class="rounded-lg border border-red-400 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
-            Seçilen AI ses girişi açılamadı. Farklı bir giriş cihazı seçin.
-        </div>
+        .sc-cols { display: grid; gap: 1.5rem; align-items: start; }
+        @media (min-width: 1024px) { .sc-cols { grid-template-columns: 1fr 1fr; } }
 
-        {{-- Device selectors --}}
-        <div class="space-y-4 rounded-xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-white/5">
-            <div class="flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Ses cihazları</h3>
-                <x-filament::button size="xs" color="gray" x-on:click="refreshDevices()">
-                    Ses cihazlarını yenile
-                </x-filament::button>
-            </div>
+        .sc-fields { display: grid; gap: 1.25rem; }
+        @media (min-width: 1280px) {
+            .sc-fields { grid-template-columns: 1fr 1fr; }
+            .sc-fields > :last-child { grid-column: 1 / -1; }
+        }
+        .sc-field { display: grid; gap: .4rem; align-content: start; }
+        .sc-label { font-size: .8125rem; font-weight: 600; }
+        .sc-help { margin: 0; font-size: .75rem; line-height: 1.45; opacity: .62; }
+        .sc-help--warn { color: #b45309; opacity: 1; }
+        .sc-help--danger { color: #dc2626; opacity: 1; }
+        .dark .sc-help--warn { color: #fbbf24; }
+        .dark .sc-help--danger { color: #f87171; }
+        .sc-linkbtn { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; color: inherit; }
 
-            <p x-show="permissionNeeded" x-cloak class="text-xs text-amber-600 dark:text-amber-400">
-                Cihaz adlarını görebilmek için mikrofon izni gerekiyor.
-                <button type="button" class="font-semibold underline" x-on:click="grantPermission()">İzin ver</button>
-            </p>
+        .sc-tiles { display: grid; gap: .75rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        @media (max-width: 640px) { .sc-tiles { grid-template-columns: 1fr; } }
+        .sc-tile { border: 1px solid rgba(120, 130, 150, .22); border-radius: .75rem; padding: .85rem 1rem; display: grid; gap: .4rem; }
+        .dark .sc-tile { border-color: rgba(255, 255, 255, .1); background: rgba(255, 255, 255, .02); }
+        .sc-tile__label { font-size: .6875rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; opacity: .55; }
+        .sc-tile__value { display: flex; align-items: center; gap: .5rem; font-size: 1rem; font-weight: 600; }
+        .sc-tile__value--time { font-size: 1.6rem; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 
-            <div class="grid gap-4 sm:grid-cols-2">
-                <label class="block space-y-1">
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">AI Ses Girişi</span>
-                    <select
-                        x-model="inputId"
-                        x-on:change="onInputChange()"
-                        class="block w-full rounded-lg border-gray-300 bg-white text-sm shadow-sm dark:border-white/10 dark:bg-white/5"
-                    >
-                        <option value="">— cihaz seçin —</option>
-                        <template x-for="d in inputs" :key="d.id">
-                            <option :value="d.id" x-text="d.label"></option>
-                        </template>
-                    </select>
-                    <span x-show="inputId && inputMissing" x-cloak class="text-xs text-red-600 dark:text-red-400">
-                        Kayıtlı giriş cihazı bulunamadı — yeniden seçin.
-                    </span>
-                    <span x-show="inputId && !inputMissing" x-cloak class="text-xs text-gray-500 dark:text-gray-400">
-                        <span x-show="!connected">Seçildi — oturum başlayınca kullanılacak.</span>
-                        <span x-show="connected" x-text="inputActive ? 'Yayında ve aktif.' : 'Yayında (cihaz doğrulanıyor)…'"></span>
-                    </span>
-                </label>
+        .sc-dot { width: .58rem; height: .58rem; border-radius: 9999px; background: #9aa4b2; flex: none; box-shadow: 0 0 0 3px rgba(154, 164, 178, .18); }
+        .sc-dot--connected, .sc-dot--live { background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, .2); }
+        .sc-dot--connecting, .sc-dot--muted { background: #d97706; box-shadow: 0 0 0 3px rgba(217, 119, 6, .2); }
+        .sc-dot--error { background: #dc2626; box-shadow: 0 0 0 3px rgba(220, 38, 38, .2); }
 
-                <label class="block space-y-1">
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">AI Ses Çıkışı</span>
-                    <select
-                        x-model="outputId"
-                        x-on:change="onOutputChange()"
-                        x-bind:disabled="broadcastAlive && outputSupported === false"
-                        class="block w-full rounded-lg border-gray-300 bg-white text-sm shadow-sm disabled:opacity-50 dark:border-white/10 dark:bg-white/5"
-                    >
-                        <option value="">— sistem varsayılanı —</option>
-                        <template x-for="d in outputs" :key="d.id">
-                            <option :value="d.id" x-text="d.label"></option>
-                        </template>
-                    </select>
-                    <span x-show="broadcastAlive && outputSupported === false" x-cloak class="text-xs text-amber-600 dark:text-amber-400">
-                        Bu tarayıcı ses çıkışı seçimini desteklemiyor. Sistem varsayılan çıkışı kullanılacak.
-                    </span>
-                    <span x-show="outputId && outputMissing" x-cloak class="text-xs text-red-600 dark:text-red-400">
-                        Kayıtlı çıkış cihazı bulunamadı — yeniden seçin.
-                    </span>
-                </label>
+        .sc-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.25rem; }
 
-                <label class="block space-y-1">
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">AI Sesi</span>
-                    <select
-                        x-model="voiceId"
-                        x-on:change="onVoiceChange()"
-                        x-bind:disabled="connected"
-                        class="block w-full rounded-lg border-gray-300 bg-white text-sm shadow-sm disabled:opacity-50 dark:border-white/10 dark:bg-white/5"
-                    >
-                        @foreach ($voices as $id => $label)
-                            <option value="{{ $id }}">{{ $label }}</option>
-                        @endforeach
-                    </select>
-                    <span x-show="connected" x-cloak class="text-xs text-gray-500 dark:text-gray-400">
-                        Ses değişikliği bir sonraki bağlantıda geçerli olur.
-                    </span>
-                </label>
+        .sc-alert { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+            border: 1px solid rgba(120, 130, 150, .28); border-radius: .75rem; padding: .85rem 1.1rem; }
+        .dark .sc-alert { border-color: rgba(255, 255, 255, .12); }
+        .sc-alert--ok { border-color: rgba(22, 163, 74, .45); }
+        .sc-alert--warn { border-color: rgba(217, 119, 6, .5); }
+        .sc-alert--danger { border-color: rgba(220, 38, 38, .55); background: rgba(220, 38, 38, .06); }
+        .sc-alert__body { flex: 1 1 18rem; display: grid; gap: .25rem; }
+        .sc-alert__title { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; opacity: .6; }
+        .sc-alert__line { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+
+        .sc-notes { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; font-size: .8125rem; opacity: .7; }
+    </style>
+
+    <div x-data="studioControl" x-cloak class="sc-root">
+
+        {{-- Title is rendered by the Filament page header; here we add the
+             prominent connection status badge. --}}
+        <div class="sc-topbar">
+            <span class="sc-topbar__caption">Reji kontrol paneli</span>
+            <div class="sc-topbar__badges">
+                <x-filament::badge color="gray"
+                    x-show="!connected && !(deviceError || deviceLost) && status !== 'Bağlanıyor…'">
+                    Bağlı değil
+                </x-filament::badge>
+                <x-filament::badge color="warning" x-cloak
+                    x-show="!connected && status === 'Bağlanıyor…' && !(deviceError || deviceLost)">
+                    Bağlanıyor
+                </x-filament::badge>
+                <x-filament::badge color="success" x-cloak
+                    x-show="connected && !(deviceError || deviceLost)">
+                    Bağlı
+                </x-filament::badge>
+                <x-filament::badge color="danger" x-cloak x-show="deviceError || deviceLost">
+                    Hata
+                </x-filament::badge>
             </div>
         </div>
 
-        {{-- Status --}}
-        <div class="grid grid-cols-2 gap-x-6 gap-y-3 rounded-xl border border-gray-200 bg-white p-5 text-sm dark:border-white/10 dark:bg-white/5">
-            <div class="text-gray-500 dark:text-gray-400">Bağlantı</div>
-            <div x-text="connected ? 'BAĞLI' : 'Bağlı değil'" :class="connected ? 'font-semibold text-green-600 dark:text-green-400' : ''"></div>
-
-            <div class="text-gray-500 dark:text-gray-400">Mikrofon</div>
-            <div x-text="!connected ? '—' : (muted ? 'SESSİZ' : 'AÇIK')"
-                 :class="muted ? 'font-semibold text-amber-600 dark:text-amber-400' : (connected ? 'font-semibold text-green-600 dark:text-green-400' : '')"></div>
-
-            <div class="text-gray-500 dark:text-gray-400">Kalan süre</div>
-            <div class="font-mono" x-text="remainingLabel"></div>
-
-            <div class="text-gray-500 dark:text-gray-400">AI sesi</div>
-            <div x-text="voiceId || '—'"></div>
-
-            <div class="text-gray-500 dark:text-gray-400">Durum</div>
-            <div x-text="status || '—'"></div>
-        </div>
-
-        {{-- Transport + mute --}}
-        <div class="flex flex-wrap gap-3">
-            <x-filament::button x-show="!connected" x-on:click="send('connect')" x-bind:disabled="!broadcastAlive || !inputId || inputMissing">
-                Bağlan
-            </x-filament::button>
-            <x-filament::button x-show="connected" color="danger" x-on:click="send('hangup')">
-                Görüşmeyi bitir
-            </x-filament::button>
-            <x-filament::button x-show="connected && !muted" color="gray" x-on:click="send('mute')">
-                Mikrofonu sessize al
-            </x-filament::button>
-            <x-filament::button x-show="connected && muted" color="warning" x-on:click="send('unmute')">
-                Mikrofonu aç
+        {{-- Broadcast screen (Studio Live) status --}}
+        <div class="sc-alert" :class="broadcastAlive ? 'sc-alert--ok' : 'sc-alert--warn'">
+            <div class="sc-alert__body">
+                <div class="sc-alert__title">Yayın Ekranı</div>
+                <div class="sc-alert__line">
+                    <span class="sc-dot" :class="broadcastAlive ? 'sc-dot--live' : 'sc-dot--connecting'"></span>
+                    <span x-show="broadcastAlive" x-cloak>Hazır</span>
+                    <span x-show="!broadcastAlive" x-cloak>Kapalı</span>
+                </div>
+                <p class="sc-help" x-show="!broadcastAlive" x-cloak>
+                    Yayın görüntüsünün çalışması için bu tarayıcıda Studio Live ekranını açın.
+                </p>
+            </div>
+            <x-filament::button
+                tag="a"
+                href="/studio/live"
+                target="_blank"
+                color="gray"
+                size="sm"
+                icon="heroicon-o-arrow-top-right-on-square"
+            >
+                Yayın ekranını aç
             </x-filament::button>
         </div>
 
-        <p class="text-xs text-gray-500 dark:text-gray-400">
-            Kontroller yalnızca bu sayfadadır; yayın ekranında hiçbir kontrol görünmez.
-            Seçilen cihaz kimlikleri yalnızca bu tarayıcıda saklanır.
-        </p>
+        {{-- Critical device alerts (conditions unchanged) --}}
+        <div class="sc-alert sc-alert--danger" x-show="deviceLost" x-cloak>
+            <div class="sc-alert__body">
+                <div class="sc-alert__title">Kritik</div>
+                <div class="sc-alert__line">Yayında kullanılan AI ses girişi kayboldu.</div>
+                <p class="sc-help sc-help--danger">Cihazı yeniden takıp seçin ya da yayını durdurun.</p>
+            </div>
+        </div>
+        <div class="sc-alert sc-alert--danger" x-show="deviceError" x-cloak>
+            <div class="sc-alert__body">
+                <div class="sc-alert__title">Cihaz hatası</div>
+                <div class="sc-alert__line">Seçilen AI ses girişi açılamadı.</div>
+                <p class="sc-help sc-help--danger">Farklı bir giriş cihazı seçin.</p>
+            </div>
+        </div>
+
+        {{-- Two columns: audio routing | live session --}}
+        <div class="sc-cols">
+            <x-filament::section
+                icon="heroicon-o-speaker-wave"
+                heading="Ses Yönlendirme"
+                description="Reji makinesindeki fiziksel ses giriş/çıkışını ve AI sesini seç."
+            >
+                <x-slot name="afterHeader">
+                    <x-filament::button
+                        size="sm"
+                        color="gray"
+                        icon="heroicon-o-arrow-path"
+                        x-on:click="refreshDevices()"
+                    >
+                        Cihazları Yenile
+                    </x-filament::button>
+                </x-slot>
+
+                <div class="sc-fields">
+                    <div class="sc-field">
+                        <label class="sc-label" for="sc-input">AI Ses Girişi</label>
+                        <x-filament::input.wrapper>
+                            <x-filament::input.select id="sc-input" x-model="inputId" x-on:change="onInputChange()">
+                                <option value="">— cihaz seçin —</option>
+                                <template x-for="d in inputs" :key="d.id">
+                                    <option :value="d.id" x-text="d.label"></option>
+                                </template>
+                            </x-filament::input.select>
+                        </x-filament::input.wrapper>
+                        <p class="sc-help">Yapay zekânın dinleyeceği ses kaynağı</p>
+                        <p class="sc-help sc-help--danger" x-show="inputId && inputMissing" x-cloak>
+                            Kayıtlı giriş cihazı bulunamadı — yeniden seçin.
+                        </p>
+                        <p class="sc-help" x-show="inputId && !inputMissing" x-cloak>
+                            <span x-show="!connected">Seçildi — oturum başlayınca kullanılacak.</span>
+                            <span x-show="connected" x-text="inputActive ? 'Yayında ve aktif.' : 'Yayında (cihaz doğrulanıyor)…'"></span>
+                        </p>
+                        <p class="sc-help sc-help--warn" x-show="permissionNeeded" x-cloak>
+                            Cihaz adları için mikrofon izni gerekiyor.
+                            <button type="button" class="sc-linkbtn" x-on:click="grantPermission()">İzin ver</button>
+                        </p>
+                    </div>
+
+                    <div class="sc-field">
+                        <label class="sc-label" for="sc-output">AI Ses Çıkışı</label>
+                        <x-filament::input.wrapper>
+                            <x-filament::input.select
+                                id="sc-output"
+                                x-model="outputId"
+                                x-on:change="onOutputChange()"
+                                x-bind:disabled="broadcastAlive && outputSupported === false"
+                            >
+                                <option value="">— sistem varsayılanı —</option>
+                                <template x-for="d in outputs" :key="d.id">
+                                    <option :value="d.id" x-text="d.label"></option>
+                                </template>
+                            </x-filament::input.select>
+                        </x-filament::input.wrapper>
+                        <p class="sc-help">Yapay zekâ sesinin gönderileceği çıkış</p>
+                        <p class="sc-help sc-help--warn" x-show="broadcastAlive && outputSupported === false" x-cloak>
+                            Bu tarayıcı ses çıkışı seçimini desteklemiyor. Sistem varsayılan çıkışı kullanılacak.
+                        </p>
+                        <p class="sc-help sc-help--danger" x-show="outputId && outputMissing" x-cloak>
+                            Kayıtlı çıkış cihazı bulunamadı — yeniden seçin.
+                        </p>
+                    </div>
+
+                    <div class="sc-field">
+                        <label class="sc-label" for="sc-voice">AI Sesi</label>
+                        <x-filament::input.wrapper>
+                            <x-filament::input.select
+                                id="sc-voice"
+                                x-model="voiceId"
+                                x-on:change="onVoiceChange()"
+                                x-bind:disabled="connected"
+                            >
+                                @foreach ($voices as $id => $label)
+                                    <option value="{{ $id }}">{{ $label }}</option>
+                                @endforeach
+                            </x-filament::input.select>
+                        </x-filament::input.wrapper>
+                        <p class="sc-help">Yapay zekânın konuşacağı ses (varsayılan: erkek)</p>
+                        <p class="sc-help" x-show="connected" x-cloak>
+                            Ses değişikliği bir sonraki bağlantıda geçerli olur.
+                        </p>
+                    </div>
+                </div>
+            </x-filament::section>
+
+            <x-filament::section
+                icon="heroicon-o-signal"
+                heading="Canlı Oturum"
+                description="Oturumu buradan başlat, sessize al ve bitir."
+            >
+                <div class="sc-tiles">
+                    <div class="sc-tile">
+                        <div class="sc-tile__label">Bağlantı</div>
+                        <div class="sc-tile__value">
+                            <span class="sc-dot" :class="(deviceError || deviceLost) ? 'sc-dot--error' : (connected ? 'sc-dot--connected' : (status === 'Bağlanıyor…' ? 'sc-dot--connecting' : ''))"></span>
+                            <span x-text="(deviceError || deviceLost) ? 'HATA' : (connected ? 'BAĞLI' : (status === 'Bağlanıyor…' ? 'BAĞLANIYOR' : 'BAĞLI DEĞİL'))"></span>
+                        </div>
+                    </div>
+                    <div class="sc-tile">
+                        <div class="sc-tile__label">Mikrofon</div>
+                        <div class="sc-tile__value">
+                            <span class="sc-dot" :class="!connected ? '' : (muted ? 'sc-dot--muted' : 'sc-dot--connected')"></span>
+                            <span x-text="!connected ? 'KAPALI' : (muted ? 'SESSİZ' : 'AÇIK')"></span>
+                        </div>
+                    </div>
+                    <div class="sc-tile">
+                        <div class="sc-tile__label">Kalan süre</div>
+                        <div class="sc-tile__value sc-tile__value--time" x-text="remainingLabel"></div>
+                    </div>
+                </div>
+
+                <div class="sc-actions">
+                    <x-filament::button
+                        size="lg"
+                        color="success"
+                        icon="heroicon-o-play"
+                        x-show="!connected"
+                        x-on:click="send('connect')"
+                        x-bind:disabled="!broadcastAlive || !inputId || inputMissing"
+                    >
+                        BAĞLAN
+                    </x-filament::button>
+                    <x-filament::button
+                        size="lg"
+                        color="warning"
+                        icon="heroicon-o-microphone"
+                        x-cloak
+                        x-show="connected && !muted"
+                        x-on:click="send('mute')"
+                    >
+                        MİKROFONU SESSİZE AL
+                    </x-filament::button>
+                    <x-filament::button
+                        size="lg"
+                        color="success"
+                        icon="heroicon-o-microphone"
+                        x-cloak
+                        x-show="connected && muted"
+                        x-on:click="send('unmute')"
+                    >
+                        MİKROFONU AÇ
+                    </x-filament::button>
+                    <x-filament::button
+                        size="lg"
+                        color="danger"
+                        icon="heroicon-o-stop"
+                        x-cloak
+                        x-show="connected"
+                        x-on:click="send('hangup')"
+                    >
+                        GÖRÜŞMEYİ BİTİR
+                    </x-filament::button>
+                </div>
+            </x-filament::section>
+        </div>
+
+        {{-- Operator info --}}
+        <x-filament::section icon="heroicon-o-information-circle" heading="Operatör Bilgisi" compact>
+            <ul class="sc-notes">
+                <li>Kontroller yalnızca bu sayfadadır; yayın ekranında hiçbir kontrol görünmez.</li>
+                <li>Seçilen ses cihazları ve ses tercihi yalnızca bu tarayıcıda saklanır.</li>
+                <li><span x-text="'Durum: ' + (status || '—')"></span></li>
+            </ul>
+        </x-filament::section>
     </div>
 
     <script>

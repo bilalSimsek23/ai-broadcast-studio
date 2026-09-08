@@ -8,9 +8,10 @@
 
 ## TASK-0007 — STUDIO LIVE REALTIME VOICE PROTOTYPE
 
-**Status:** COMPLETE — Pint, `php artisan test` (242 passing), PHPStan level 6
-(0, no baseline) all green. Real Chrome / microphone / multi-device acceptance
-is MANUAL and has NOT been run automatically (JS was syntax-checked only).
+**Status:** COMPLETE — Pint, `php artisan test` (247 passing), PHPStan level 6
+(0, no baseline) all green. Real Chrome / microphone / multi-device / visual
+acceptance is MANUAL and has NOT been run automatically (Blade renders + JS
+syntax verified only).
 
 **Amendments after the first live prova (2026-09-08):**
 1. Session cap **20 min** (`STUDIO_LIVE_MAX_SECONDS` default 1200); the browser
@@ -22,7 +23,7 @@ is MANUAL and has NOT been run automatically (JS was syntax-checked only).
    director's console — Bağlan / Görüşmeyi bitir / Mikrofonu sessize al /
    Mikrofonu aç, connection + mute state, remaining time, **AI Ses Girişi** /
    **AI Ses Çıkışı** physical device selectors + **AI Sesi** voice picker,
-   "Ses cihazlarını yenile".
+   "Cihazları Yenile".
 5b. The AI voice defaults to a **male** voice (`cedar`); the director may
    switch it per session from the "AI Sesi" `<select>` (allow-list
    `config('ai.realtime.voices')`, validated server-side; unknown → default).
@@ -34,6 +35,20 @@ is MANUAL and has NOT been run automatically (JS was syntax-checked only).
 5. Orb enlarged to `min(70vw, 70vh)` and made mathematically contained — at max
    amplitude the outer glow is exactly `S*0.49`, never clipped at any
    resolution; the CSS `drop-shadow` (which the container could clip) is gone.
+6. **Studio Control visual redesign (presentation only — no behaviour change).**
+   Root cause of the "raw" look: the page used app-level Tailwind utility
+   classes, but Filament panel pages load Filament's own compiled CSS (published
+   to `public/css/filament` on `composer install`), **not** `resources/css/app.css`
+   — and that app build doesn't scan `resources/views/filament/**` anyway
+   (Tailwind v4, `@source` list). So those utilities resolved to nothing.
+   Fix: rebuilt the markup with Filament's own `fi-*` components
+   (`<x-filament::section>` / `badge` / `button` / `input.wrapper` +
+   `input.select`) which are styled by the shipped stylesheet, plus a small
+   **page-scoped `<style>` of plain CSS** (grid / status tiles / alerts — not
+   utility classes, so nothing to purge, no Vite dependency). 2-column desktop
+   layout, `$maxContentWidth = Width::SevenExtraLarge`, status tiles, typed
+   connection badge, styled "Yayın Ekranı" banner. No production asset-pipeline
+   bug found — Filament serves its own CSS and it was already loading.
 
 **Goal:** the first working prototype of an uninterrupted spoken Turkish debate
 between a real studio host and the AI, split into a **clean broadcast layer**
@@ -126,11 +141,15 @@ one click anywhere on the broadcast screen. Orb: `min(70vw,70vh)`, contained by
 construction (max glow = `S*0.49`), no CSS drop-shadow.
 
 **Operator layer** — `resources/views/filament/pages/studio-control.blade.php`
-(Alpine): device permission handling + `enumerateDevices()` for `audioinput` /
-`audiooutput` with same-name disambiguation; **AI Ses Girişi** / **AI Ses
-Çıkışı** `<select>`s + **AI Sesi** `<select>` (options from
+(Alpine + Filament `fi-*` components + a page-scoped plain-CSS `<style>` for
+grid/tiles/alerts; wide desktop layout `Width::SevenExtraLarge`, 2-column
+Ses Yönlendirme | Canlı Oturum cards, 3 status tiles, typed connection badge,
+"Yayın Ekranı" banner with an "aç" button). Behaviour: device permission
+handling + `enumerateDevices()` for `audioinput` / `audiooutput` with same-name
+disambiguation; **AI Ses Girişi** / **AI Ses Çıkışı** selects + **AI Sesi**
+select (options from
 `config('ai.realtime.voices')`, default `cedar` / male, disabled while
-connected); "Ses cihazlarını yenile" + `mediaDevices.ondevicechange`
+connected); "Cihazları Yenile" + `mediaDevices.ondevicechange`
 auto-refresh; localStorage persistence (`studio.control.inputDeviceId` /
 `…outputDeviceId` / `…voiceId`) reloaded on open, auto-selected if still
 present, else a "yeniden seçin" prompt; the voice + deviceIds ride the same
@@ -213,7 +232,7 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 - `tests/Feature/Filament/StudioControlPageTest.php` — guest → `/admin/login`;
   non-admin → 403; admin → console with all four transport/mute buttons, the
   input/output device selectors + **AI Sesi** picker (Cedar/Marin options),
-  "Ses cihazlarını yenile", Kalan süre / Mikrofon readouts,
+  "Cihazları Yenile", Kalan süre / Mikrofon readouts,
   `BroadcastChannel('studio-live')` + `enumerateDevices` + `localStorage`, the
   unsupported-output message; no key / `client_secret` / `sk-`.
 
@@ -227,7 +246,7 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 - [x] AI Ses Girişi + AI Ses Çıkışı device selectors (`enumerateDevices`,
       `getUserMedia deviceId:{exact}`, `setSinkId`), permission flow, explicit
       error + reselect when a chosen device is gone (no silent default)
-- [x] "Ses cihazlarını yenile" + `ondevicechange` auto-refresh; critical
+- [x] "Cihazları Yenile" + `ondevicechange` auto-refresh; critical
       warning when the live input device disappears
 - [x] deviceIds persisted browser-local (`localStorage`), never server config;
       reloaded + auto-selected on open

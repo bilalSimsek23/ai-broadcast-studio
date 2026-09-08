@@ -30,11 +30,18 @@ class StudioControlPageTest extends TestCase
 
         $response = $this->get('/admin/studio-control')->assertOk();
 
+        // Section cards + operator info block
+        $response->assertSee('Ses Yönlendirme');
+        $response->assertSee('Canlı Oturum');
+        $response->assertSee('Operatör Bilgisi');
+        $response->assertSee('Yayın Ekranı');
+
         // Transport + mute controls
-        $response->assertSee('Bağlan');
-        $response->assertSee('Görüşmeyi bitir');
-        $response->assertSee('Mikrofonu sessize al');
-        $response->assertSee('Mikrofonu aç');
+        $response->assertSee('BAĞLAN');
+        $response->assertSee('GÖRÜŞMEYİ BİTİR');
+        $response->assertSee('MİKROFONU SESSİZE AL');
+        $response->assertSee('MİKROFONU AÇ');
+        $response->assertSee('Yayın ekranını aç');
 
         // Device selectors + voice picker + refresh + status readouts
         $response->assertSee('AI Ses Girişi');
@@ -42,9 +49,20 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('AI Sesi');
         $response->assertSee('Cedar — erkek'); // default MALE voice, from config allow-list
         $response->assertSee('Marin — kadın');
-        $response->assertSee('Ses cihazlarını yenile');
+        $response->assertSee('Cihazları Yenile');
+        $response->assertSee('Yapay zekânın dinleyeceği ses kaynağı');
+        $response->assertSee('Yapay zekâ sesinin gönderileceği çıkış');
         $response->assertSee('Kalan süre');
+        $response->assertSee('Bağlantı');
         $response->assertSee('Mikrofon');
+
+        // Rendered with Filament's own component classes (not raw utility soup),
+        // so it is styled by Filament's shipped CSS without an app Tailwind build.
+        $response->assertSee('fi-section', escape: false);
+        $response->assertSee('fi-select-input', escape: false);
+        $response->assertSee('fi-btn', escape: false);
+        $response->assertDontSee('rounded-xl border border-gray-200', escape: false);
+        $response->assertDontSee('block w-full rounded-lg border-gray-300', escape: false);
 
         // Same-origin BroadcastChannel bridge to /studio/live, browser-local
         // device persistence — no server relay, no server-side device config.

@@ -7,6 +7,7 @@ namespace App\Filament\Pages;
 use App\Models\User;
 use BackedEnum;
 use Filament\Pages\Page;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use UnitEnum;
 
@@ -38,6 +39,9 @@ class StudioControl extends Page
     protected static ?string $slug = 'studio-control';
 
     protected string $view = 'filament.pages.studio-control';
+
+    // Reji / broadcast use — wide desktop layout (1080p / 1440p monitors).
+    protected Width|string|null $maxContentWidth = Width::SevenExtraLarge;
 
     public static function canAccess(): bool
     {

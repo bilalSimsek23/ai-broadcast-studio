@@ -36,14 +36,22 @@ final readonly class MintStudioSession
         private Repository $config,
     ) {}
 
-    public function __invoke(): StudioSession
+    /**
+     * @param  string|null  $requestedVoice  the voice the director picked in
+     *                                       Studio Control — honoured only if it is one of the keys in
+     *                                       config('ai.realtime.voices'); otherwise the provider's configured
+     *                                       (male) default is used.
+     */
+    public function __invoke(?string $requestedVoice = null): StudioSession
     {
         $instructions = $this->config->get('ai.realtime.instructions');
         $instructions = is_string($instructions) && trim($instructions) !== ''
             ? $instructions
             : self::FALLBACK_INSTRUCTIONS;
 
-        $token = $this->provider->createClientSession(new RealtimeSessionRequest($instructions));
+        $token = $this->provider->createClientSession(
+            new RealtimeSessionRequest($instructions, $this->resolveVoice($requestedVoice)),
+        );
 
         $maxSeconds = $this->config->get('ai.realtime.session_max_seconds');
         $maxSeconds = is_int($maxSeconds) ? $maxSeconds : self::DEFAULT_SECONDS;
@@ -55,6 +63,23 @@ final readonly class MintStudioSession
             : self::FALLBACK_WEBRTC_URL;
 
         return new StudioSession($token, $maxSeconds, $webrtcUrl, $this->audioConstraints());
+    }
+
+    /**
+     * A requested voice is honoured only when it is an allow-listed key in
+     * config('ai.realtime.voices'); anything else (incl. null / blank) returns
+     * null so the provider falls back to its configured default voice.
+     */
+    private function resolveVoice(?string $requested): ?string
+    {
+        if ($requested === null || trim($requested) === '') {
+            return null;
+        }
+
+        $voices = $this->config->get('ai.realtime.voices');
+        $allowed = is_array($voices) ? array_keys($voices) : [];
+
+        return in_array($requested, $allowed, true) ? $requested : null;
     }
 
     /**

@@ -45,4 +45,18 @@ class StudioControl extends Page
 
         return $user instanceof User && $user->is_admin === true;
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function getViewData(): array
+    {
+        $voices = config('ai.realtime.voices');
+        $default = config('ai.realtime.connections.openai.voice');
+
+        return [
+            'voices' => is_array($voices) ? $voices : [],
+            'defaultVoice' => is_string($default) && $default !== '' ? $default : 'cedar',
+        ];
+    }
 }

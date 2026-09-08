@@ -85,9 +85,10 @@ Provası" rehearsal page. TASK-0007 adds the **first realtime feature**, split
 into two same-browser layers: `/studio/live` is the **clean broadcast output**
 (orb only, no controls/text) and the Filament **"Canlı Yayın Kontrolü"** page
 (`/admin/studio-control`) is the director's console — Bağlan / bitir / mute,
-connection + remaining-time state, and **physical AI-input / AI-output device
+connection + remaining-time state, **physical AI-input / AI-output device
 selectors** (enumerated and applied in the reji browser, deviceIds persisted in
-localStorage). Browser mic ↔ OpenAI Realtime over **WebRTC**, ephemeral key
+localStorage), and an **AI voice picker** (male `cedar` by default; allow-list
+`config('ai.realtime.voices')`, validated server-side). Browser mic ↔ OpenAI Realtime over **WebRTC**, ephemeral key
 minted server-side (never in the browser); config-driven studio noise handling
 (`echoCancellation`/`noiseSuppression`/`autoGainControl` + `far_field`
 `noise_reduction` + a mild `server_vad` raise, barge-in kept). **20-minute**

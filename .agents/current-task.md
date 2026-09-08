@@ -20,8 +20,13 @@ is MANUAL and has NOT been run automatically (JS was syntax-checked only).
    controls moved to a Filament admin page.
 3. New Filament page **"Canlı Yayın Kontrolü"** (`/admin/studio-control`): the
    director's console — Bağlan / Görüşmeyi bitir / Mikrofonu sessize al /
-   Mikrofonu aç, connection + mute state, remaining time, **AI Ses Girişi** and
-   **AI Ses Çıkışı** physical device selectors, "Ses cihazlarını yenile".
+   Mikrofonu aç, connection + mute state, remaining time, **AI Ses Girişi** /
+   **AI Ses Çıkışı** physical device selectors + **AI Sesi** voice picker,
+   "Ses cihazlarını yenile".
+5b. The AI voice defaults to a **male** voice (`cedar`); the director may
+   switch it per session from the "AI Sesi" `<select>` (allow-list
+   `config('ai.realtime.voices')`, validated server-side; unknown → default).
+   The choice is persisted browser-local like the deviceIds.
 4. Studio-room noise handling: getUserMedia `echoCancellation` /
    `noiseSuppression` / `autoGainControl` (config → response, no literal) and a
    MILD OpenAI `server_vad` raise + `far_field` `noise_reduction`
@@ -123,10 +128,15 @@ construction (max glow = `S*0.49`), no CSS drop-shadow.
 **Operator layer** — `resources/views/filament/pages/studio-control.blade.php`
 (Alpine): device permission handling + `enumerateDevices()` for `audioinput` /
 `audiooutput` with same-name disambiguation; **AI Ses Girişi** / **AI Ses
-Çıkışı** `<select>`s; "Ses cihazlarını yenile" + `mediaDevices.ondevicechange`
+Çıkışı** `<select>`s + **AI Sesi** `<select>` (options from
+`config('ai.realtime.voices')`, default `cedar` / male, disabled while
+connected); "Ses cihazlarını yenile" + `mediaDevices.ondevicechange`
 auto-refresh; localStorage persistence (`studio.control.inputDeviceId` /
-`…outputDeviceId`) reloaded on open, auto-selected if still present, else a
-"yeniden seçin" prompt; **Bağlan** (disabled until broadcast alive + an input
+`…outputDeviceId` / `…voiceId`) reloaded on open, auto-selected if still
+present, else a "yeniden seçin" prompt; the voice + deviceIds ride the same
+`{type:'devices', inputId, outputId, voiceId}` BroadcastChannel message and
+`/studio/live` sends the voice in the mint `POST` body (validated server-side);
+**Bağlan** (disabled until broadcast alive + an input
 chosen) / **Görüşmeyi bitir** / **Mikrofonu sessize al** / **Mikrofonu aç**;
 readouts for Bağlantı / Mikrofon (AÇIK·SESSİZ) / Kalan süre / Durum; critical
 red banner on `deviceLost`, error on `deviceError`, "Bu tarayıcı ses çıkışı
@@ -135,6 +145,11 @@ seçimini desteklemiyor" when `outputSupported === false`.
 **Config** — `config/ai.php` `ai.realtime`: `driver` (`AI_REALTIME_DRIVER`,
 default `fake`), `session_max_seconds` (`STUDIO_LIVE_MAX_SECONDS`, **default
 1200 = 20 min**, clamped [30, 3600]), `webrtc_url`, `instructions`, **`audio`**
+(new); **`voices`** allow-list (default `cedar`, male). `connections.openai.voice`
+default is now **`cedar`** (`OPENAI_REALTIME_VOICE`). `MintStudioSession`
+validates a requested voice against `voices` keys and passes it as the
+`RealtimeSessionRequest` override (unknown → null → provider default). Config
+`audio`
 (new): `constraints.{echoCancellation,noiseSuppression,autoGainControl}`
 (`STUDIO_LIVE_ECHO_CANCELLATION` / `_NOISE_SUPPRESSION` / `_AUTO_GAIN`, all
 default true; passed through to the browser), `noise_reduction`
@@ -151,7 +166,8 @@ only in the reji browser's localStorage.
 
 `AI_REALTIME_DRIVER=openai`, `OPENAI_API_KEY=<secret>` (already set for text).
 Optional tuning: `OPENAI_REALTIME_MODEL` (`gpt-realtime`), `OPENAI_REALTIME_VOICE`
-(`marin`), `STUDIO_LIVE_MAX_SECONDS` (1200; 1800–2400 for 30–40 min rehearsals —
+(`cedar` — **male** default; director can switch per session in Studio Control),
+`STUDIO_LIVE_MAX_SECONDS` (1200; 1800–2400 for 30–40 min rehearsals —
 **if the environment still has `STUDIO_LIVE_MAX_SECONDS=600` it MUST be changed
 to 1200 or removed**), `STUDIO_LIVE_INSTRUCTIONS`, `STUDIO_LIVE_NOISE_REDUCTION`
 (`far_field`), `STUDIO_LIVE_VAD_THRESHOLD` (`0.6`), `STUDIO_LIVE_VAD_SILENCE_MS`
@@ -176,8 +192,10 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
   secret; deterministic; records calls + voice override.
 - `tests/Feature/AI/MintStudioSessionTest.php` — default length 1200; honours a
   configured length incl. 2400; clamps to [30, 3600]; unusable value → 1200;
-  forwards brief + `webrtc_url`; **passes getUserMedia constraints through from
-  config (default all-on; `autoGainControl:false` reflected).**
+  forwards brief + `webrtc_url`; passes getUserMedia constraints through from
+  config (default all-on; `autoGainControl:false` reflected); **no requested
+  voice → provider default; an allow-listed voice → override; an unknown voice
+  → ignored.**
 - `tests/Feature/Studio/StudioLivePageTest.php` — guest → `/admin/login`;
   non-admin → 403; admin → **only the orb**: no `<button>`, no `#controls` /
   `#connect` / `#hangup` / `#timer` / `#status`, no "Yayın görünümü"; carries
@@ -189,10 +207,13 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
   default; `noiseSuppression:false` when configured), key never in body, no
   HTTP; default `session_max_seconds` 1200, configurable 2400/480; openai
   driver (`Http::fake`) → mints via API, Bearer = standing key, brief forwarded,
+  **no voice picked → `audio.output.voice` = `cedar`**; `voice:'ash'` →
+  `audio.output.voice` = `ash`; an unknown voice → falls back to `cedar`;
   key not in response; upstream 401 → safe `503`; rate-limited (13th → 429).
 - `tests/Feature/Filament/StudioControlPageTest.php` — guest → `/admin/login`;
-  non-admin → 403; admin → console with all four transport/mute buttons, both
-  device selectors, "Ses cihazlarını yenile", Kalan süre / Mikrofon readouts,
+  non-admin → 403; admin → console with all four transport/mute buttons, the
+  input/output device selectors + **AI Sesi** picker (Cedar/Marin options),
+  "Ses cihazlarını yenile", Kalan süre / Mikrofon readouts,
   `BroadcastChannel('studio-live')` + `enumerateDevices` + `localStorage`, the
   unsupported-output message; no key / `client_secret` / `sk-`.
 
@@ -221,7 +242,9 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 - [x] No backend device enumeration; no server-side audio relay; existing
       WebRTC/ephemeral-key + admin gating unchanged
 - [x] No existing feature or test broken (additive only)
-- [x] Pint · `php artisan test` (242) · PHPStan level 6 (0, no baseline)
+- [x] AI voice is **male by default** (`cedar`) and switchable per session from
+      Studio Control against a server-validated config allow-list
+- [x] Pint · `php artisan test` (247) · PHPStan level 6 (0, no baseline)
 - [ ] **Manual (real Chrome + ≥2 audio interfaces) — NOT performed here** (JS
       syntax-checked only). See the checklist in the delivery report.
 

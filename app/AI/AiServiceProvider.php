@@ -80,7 +80,7 @@ final class AiServiceProvider extends ServiceProvider
                     : 'gpt-realtime',
                 voice: is_string($connection['voice'] ?? null) && trim($connection['voice']) !== ''
                     ? $connection['voice']
-                    : 'marin',
+                    : 'cedar',
                 timeoutSeconds: self::positiveInt($connection['timeout'] ?? null, 15),
                 connectTimeoutSeconds: self::positiveInt($connection['connect_timeout'] ?? null, 10),
                 turnDetection: self::numericMap(is_array($turnDetection) ? $turnDetection : []),

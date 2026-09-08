@@ -36,9 +36,12 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('Mikrofonu sessize al');
         $response->assertSee('Mikrofonu aç');
 
-        // Device selectors + refresh + status readouts
+        // Device selectors + voice picker + refresh + status readouts
         $response->assertSee('AI Ses Girişi');
         $response->assertSee('AI Ses Çıkışı');
+        $response->assertSee('AI Sesi');
+        $response->assertSee('Cedar — erkek'); // default MALE voice, from config allow-list
+        $response->assertSee('Marin — kadın');
         $response->assertSee('Ses cihazlarını yenile');
         $response->assertSee('Kalan süre');
         $response->assertSee('Mikrofon');

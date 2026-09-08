@@ -134,6 +134,22 @@ return [
         // via env for tuning without a deploy.
         'instructions' => env('STUDIO_LIVE_INSTRUCTIONS', 'Sen bir canlı Türk televizyon programında, stüdyodaki insan sunucuyla Türkçe sesli olarak tartışan bir yapay zekâ konuşmacısısın. Doğal, akıcı ve kesintisiz konuş; kısa, net cümleler kur. Önce sunucuyu dinle, sonra yanıt ver. Karşıt görüşleri nazik ama kararlı biçimde savun ve gerekçelendir. Her koşulda yalnızca Türkçe konuş.'),
 
+        // The voices the director may pick from on the Studio Control page. The
+        // request is validated against these KEYS server-side before it is sent
+        // to the vendor. The AI defaults to a MALE voice
+        // (`connections.openai.voice`, `cedar`); an unlisted / unset choice
+        // falls back to that default.
+        'voices' => [
+            'cedar' => 'Cedar — erkek',
+            'ash' => 'Ash — erkek',
+            'ballad' => 'Ballad — erkek',
+            'verse' => 'Verse — erkek',
+            'marin' => 'Marin — kadın',
+            'coral' => 'Coral — kadın',
+            'sage' => 'Sage — kadın',
+            'alloy' => 'Alloy — nötr',
+        ],
+
         // Studio-room audio handling. All values are config, not literals in
         // the frontend: `constraints` are passed through to the browser's
         // getUserMedia; the rest tunes the OpenAI Realtime input pipeline so
@@ -175,7 +191,9 @@ return [
                 // The adapter appends `/realtime/client_secrets`.
                 'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
                 'model' => env('OPENAI_REALTIME_MODEL', 'gpt-realtime'),
-                'voice' => env('OPENAI_REALTIME_VOICE', 'marin'),
+                // The AI speaks with a MALE voice. `cedar` is the male voice of
+                // the gpt-realtime GA pair (its female counterpart is `marin`).
+                'voice' => env('OPENAI_REALTIME_VOICE', 'cedar'),
                 'timeout' => (int) env('OPENAI_REALTIME_TIMEOUT', 15),
                 'connect_timeout' => (int) env('OPENAI_REALTIME_CONNECT_TIMEOUT', 10),
             ],

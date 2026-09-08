@@ -421,11 +421,12 @@ device discovery + deviceId management entirely in the reji browser.
 - `MintStudioSession` + `StudioSession` (`app/AI/Realtime/`) — thin service:
   reads the standing brief + session cap
   (`config('ai.realtime.session_max_seconds')`, default 1200s, clamped
-  [30, 3600]) + WebRTC URL + getUserMedia constraints, calls the bound
-  provider, returns `{client_secret, expires_at, model, voice,
-  session_max_seconds, webrtc_url, audio_constraints}`. Session length +
-  constraints live ONLY here — the browser uses the response values, never its
-  own copy.
+  [30, 3600]) + WebRTC URL + getUserMedia constraints, validates a
+  director-requested voice against `config('ai.realtime.voices')` (unknown →
+  provider default, a **male** voice), calls the bound provider, returns
+  `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url,
+  audio_constraints}`. Session length + constraints live ONLY here — the
+  browser uses the response values, never its own copy.
 - `AiServiceProvider` binds all three; driver from `config('ai.realtime.driver')`
   (`fake` default, `openai` in prod), passing `config('ai.realtime.audio.*')`
   tuning to the OpenAI adapter.
@@ -440,7 +441,8 @@ admin-gated. The Filament `App\Filament\Pages\StudioControl`
 orb + hidden `<audio>` + inline vanilla JS, nothing else visible. Sole owner of
 `getUserMedia` / `RTCPeerConnection` / the sink. Listens on
 `BroadcastChannel('studio-live')` for `cmd` (connect/hangup/mute/unmute) and
-`devices` (input/output deviceId); publishes `state` (connected, muted,
+`devices` (input/output deviceId + `voiceId`, sent in the mint `POST` body);
+publishes `state` (connected, muted,
 remainingSeconds, status, inputActive, outputSupported, deviceError,
 deviceLost) every second (heartbeat) + on change. `getUserMedia` with a chosen
 `deviceId:{exact}` that fails → `deviceError`, **no silent default fallback**;
@@ -454,16 +456,19 @@ releases the mic. Orb: `min(70vw,70vh)`, contained by construction (max glow
 **Operator layer** (`resources/views/filament/pages/studio-control.blade.php`,
 Alpine) — holds no media: `enumerateDevices()` for `audioinput` / `audiooutput`
 (same-name disambiguation, permission-grant affordance), the **AI Ses Girişi** /
-**AI Ses Çıkışı** selectors, "Ses cihazlarını yenile" + `ondevicechange`
-auto-refresh, `localStorage` deviceId persistence (per reji machine, **never
-server config**), the four transport/mute buttons, and Bağlantı / Mikrofon /
-Kalan süre / Durum readouts + `deviceLost` critical banner.
+**AI Ses Çıkışı** selectors + an **AI Sesi** voice picker (options from
+`config('ai.realtime.voices')`, default `cedar` / male, disabled while
+connected), "Ses cihazlarını yenile" + `ondevicechange` auto-refresh,
+`localStorage` deviceId + voice persistence (per reji machine, **never server
+config**), the four transport/mute buttons, and Bağlantı / Mikrofon / Kalan
+süre / AI sesi / Durum readouts + `deviceLost` critical banner.
 
 **Config** — `config/ai.php` → `ai.realtime`: `driver`, `session_max_seconds`,
-`webrtc_url`, `instructions`, **`audio`** (`constraints.{echoCancellation,
-noiseSuppression,autoGainControl}`, `noise_reduction`,
-`turn_detection.{threshold,prefix_padding_ms,silence_duration_ms}`), `drivers`,
-`connections.openai`. Every key `env()`-overridable and in `.env.example`.
+`webrtc_url`, `instructions`, **`voices`** (allow-list for the picker; default
+`cedar`, male), **`audio`** (`constraints.{echoCancellation,noiseSuppression,
+autoGainControl}`, `noise_reduction`, `turn_detection.{threshold,
+prefix_padding_ms,silence_duration_ms}`), `drivers`, `connections.openai`
+(`voice` default `cedar`). Every key `env()`-overridable and in `.env.example`.
 Physical deviceIds are never here — browser localStorage only.
 
 ## 3. Key boundaries

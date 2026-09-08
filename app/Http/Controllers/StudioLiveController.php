@@ -8,6 +8,7 @@ use App\AI\Exceptions\ProviderException;
 use App\AI\Realtime\MintStudioSession;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
  * The /studio/live realtime voice prototype: a full-screen page where a studio
@@ -26,10 +27,15 @@ final class StudioLiveController extends Controller
         ]);
     }
 
-    public function session(MintStudioSession $mint): JsonResponse
+    public function session(Request $request, MintStudioSession $mint): JsonResponse
     {
+        $voice = $request->input('voice');
+        $voice = is_string($voice) && $voice !== '' ? $voice : null;
+
         try {
-            $session = $mint();
+            // The voice is validated against config('ai.realtime.voices') inside
+            // the service; an unknown value falls back to the default.
+            $session = $mint($voice);
         } catch (ProviderException $e) {
             report($e);
 

@@ -85,6 +85,23 @@
                         Kayıtlı çıkış cihazı bulunamadı — yeniden seçin.
                     </span>
                 </label>
+
+                <label class="block space-y-1">
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">AI Sesi</span>
+                    <select
+                        x-model="voiceId"
+                        x-on:change="onVoiceChange()"
+                        x-bind:disabled="connected"
+                        class="block w-full rounded-lg border-gray-300 bg-white text-sm shadow-sm disabled:opacity-50 dark:border-white/10 dark:bg-white/5"
+                    >
+                        @foreach ($voices as $id => $label)
+                            <option value="{{ $id }}">{{ $label }}</option>
+                        @endforeach
+                    </select>
+                    <span x-show="connected" x-cloak class="text-xs text-gray-500 dark:text-gray-400">
+                        Ses değişikliği bir sonraki bağlantıda geçerli olur.
+                    </span>
+                </label>
             </div>
         </div>
 
@@ -99,6 +116,9 @@
 
             <div class="text-gray-500 dark:text-gray-400">Kalan süre</div>
             <div class="font-mono" x-text="remainingLabel"></div>
+
+            <div class="text-gray-500 dark:text-gray-400">AI sesi</div>
+            <div x-text="voiceId || '—'"></div>
 
             <div class="text-gray-500 dark:text-gray-400">Durum</div>
             <div x-text="status || '—'"></div>
@@ -131,12 +151,14 @@
             Alpine.data('studioControl', function () {
                 var IN_KEY = 'studio.control.inputDeviceId';
                 var OUT_KEY = 'studio.control.outputDeviceId';
+                var VOICE_KEY = 'studio.control.voiceId';
+                var DEFAULT_VOICE = @js($defaultVoice);
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
 
                 return {
                     connected: false, muted: false, status: 'Hazır', remaining: null, broadcastAlive: false,
-                    inputs: [], outputs: [], inputId: '', outputId: '',
+                    inputs: [], outputs: [], inputId: '', outputId: '', voiceId: DEFAULT_VOICE,
                     inputMissing: false, outputMissing: false, permissionNeeded: false,
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
                     _bc: null, _last: 0, _iv: null,
@@ -150,6 +172,7 @@
                     init: function () {
                         this.inputId = lsGet(IN_KEY);
                         this.outputId = lsGet(OUT_KEY);
+                        this.voiceId = lsGet(VOICE_KEY) || DEFAULT_VOICE;
 
                         try { this._bc = new BroadcastChannel('studio-live'); } catch (e) { this._bc = null; }
                         if (this._bc) {
@@ -255,9 +278,18 @@
                         this.outputMissing = false;
                         this.sendDevices();
                     },
+                    onVoiceChange: function () {
+                        lsSet(VOICE_KEY, this.voiceId);
+                        this.sendDevices();
+                    },
 
                     sendDevices: function () {
-                        if (this._bc) this._bc.postMessage({ type: 'devices', inputId: this.inputId || null, outputId: this.outputId || null });
+                        if (this._bc) this._bc.postMessage({
+                            type: 'devices',
+                            inputId: this.inputId || null,
+                            outputId: this.outputId || null,
+                            voiceId: this.voiceId || null
+                        });
                     },
                     send: function (cmd) {
                         if (this._bc) this._bc.postMessage({ type: 'cmd', cmd: cmd });

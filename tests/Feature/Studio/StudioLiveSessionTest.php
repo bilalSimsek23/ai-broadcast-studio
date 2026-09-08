@@ -31,7 +31,7 @@ class StudioLiveSessionTest extends TestCase
             'api_key' => self::STANDING_KEY,
             'base_url' => 'https://api.openai.test/v1',
             'model' => 'gpt-realtime',
-            'voice' => 'marin',
+            'voice' => 'cedar',
             'timeout' => 15,
             'connect_timeout' => 10,
         ]);
@@ -125,8 +125,38 @@ class StudioLiveSessionTest extends TestCase
         Http::assertSent(function (Request $request): bool {
             return $request->url() === 'https://api.openai.test/v1/realtime/client_secrets'
                 && $request->hasHeader('Authorization', 'Bearer '.self::STANDING_KEY)
-                && $request->data()['session']['instructions'] === 'Stüdyo brifingi: Türkçe tartış.';
+                && $request->data()['session']['instructions'] === 'Stüdyo brifingi: Türkçe tartış.'
+                // no voice picked → the configured default (male) voice
+                && $request->data()['session']['audio']['output']['voice'] === 'cedar';
         });
+    }
+
+    public function test_the_director_can_pick_an_allow_listed_voice_for_the_session(): void
+    {
+        Http::fake([
+            'https://api.openai.test/v1/realtime/client_secrets' => Http::response(
+                ['value' => 'ek_x', 'expires_at' => 1_900_000_000],
+            ),
+        ]);
+        $this->useOpenAiDriver();
+        $this->actingAsAdmin();
+
+        $this->postJson('/studio/live/session', ['voice' => 'ash'])->assertOk();
+        Http::assertSent(fn (Request $request): bool => $request->data()['session']['audio']['output']['voice'] === 'ash');
+    }
+
+    public function test_an_unknown_requested_voice_falls_back_to_the_default(): void
+    {
+        Http::fake([
+            'https://api.openai.test/v1/realtime/client_secrets' => Http::response(
+                ['value' => 'ek_x', 'expires_at' => 1_900_000_000],
+            ),
+        ]);
+        $this->useOpenAiDriver();
+        $this->actingAsAdmin();
+
+        $this->postJson('/studio/live/session', ['voice' => 'totally-not-a-voice'])->assertOk();
+        Http::assertSent(fn (Request $request): bool => $request->data()['session']['audio']['output']['voice'] === 'cedar');
     }
 
     public function test_an_upstream_failure_degrades_to_a_safe_503_with_no_key(): void

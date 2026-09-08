@@ -24,7 +24,7 @@ class OpenAiRealtimeProviderTest extends TestCase
 
     private function provider(string $apiKey = self::API_KEY): OpenAiRealtimeProvider
     {
-        return new OpenAiRealtimeProvider($apiKey, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10);
+        return new OpenAiRealtimeProvider($apiKey, self::BASE_URL, 'gpt-realtime', 'cedar', 15, 10);
     }
 
     private function request(?string $voiceOverride = null): RealtimeSessionRequest
@@ -47,7 +47,7 @@ class OpenAiRealtimeProviderTest extends TestCase
         $this->assertSame('ek_live_abc123', $token->clientSecret);
         $this->assertSame(1_900_000_000, $token->expiresAt);
         $this->assertSame('gpt-realtime-2026', $token->model);
-        $this->assertSame('marin', $token->voice);
+        $this->assertSame('cedar', $token->voice);
     }
 
     public function test_it_sends_the_standing_key_as_a_bearer_and_a_realtime_session_body(): void
@@ -64,7 +64,7 @@ class OpenAiRealtimeProviderTest extends TestCase
                 && $body['session']['type'] === 'realtime'
                 && $body['session']['model'] === 'gpt-realtime'
                 && $body['session']['instructions'] === 'Türkçe konuş ve kısa cevap ver.'
-                && $body['session']['audio']['output']['voice'] === 'marin';
+                && $body['session']['audio']['output']['voice'] === 'cedar';
         });
     }
 
@@ -72,10 +72,11 @@ class OpenAiRealtimeProviderTest extends TestCase
     {
         Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
 
-        $token = $this->provider()->createClientSession($this->request(voiceOverride: 'cedar'));
+        // Override with a voice DIFFERENT from the provider default ('cedar').
+        $token = $this->provider()->createClientSession($this->request(voiceOverride: 'marin'));
 
-        $this->assertSame('cedar', $token->voice);
-        Http::assertSent(fn (Request $request): bool => $request->data()['session']['audio']['output']['voice'] === 'cedar');
+        $this->assertSame('marin', $token->voice);
+        Http::assertSent(fn (Request $request): bool => $request->data()['session']['audio']['output']['voice'] === 'marin');
     }
 
     public function test_it_accepts_the_nested_client_secret_shape(): void
@@ -177,7 +178,7 @@ class OpenAiRealtimeProviderTest extends TestCase
         Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
 
         $provider = new OpenAiRealtimeProvider(
-            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10,
+            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'cedar', 15, 10,
             turnDetection: ['threshold' => 0.6, 'prefix_padding_ms' => 300, 'silence_duration_ms' => 500],
             noiseReduction: 'far_field',
         );
@@ -203,7 +204,7 @@ class OpenAiRealtimeProviderTest extends TestCase
         Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
 
         $provider = new OpenAiRealtimeProvider(
-            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10,
+            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'cedar', 15, 10,
             noiseReduction: 'off',
         );
 

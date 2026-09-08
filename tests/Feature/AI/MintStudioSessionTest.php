@@ -58,6 +58,27 @@ class MintStudioSessionTest extends TestCase
         );
     }
 
+    public function test_no_requested_voice_leaves_the_provider_default(): void
+    {
+        ($this->mint())();
+
+        $this->assertNull($this->app->make(FakeRealtimeVoiceProvider::class)->lastCall()?->voiceOverride);
+    }
+
+    public function test_it_forwards_an_allow_listed_requested_voice_as_an_override(): void
+    {
+        ($this->mint())('marin');
+
+        $this->assertSame('marin', $this->app->make(FakeRealtimeVoiceProvider::class)->lastCall()?->voiceOverride);
+    }
+
+    public function test_it_ignores_a_voice_that_is_not_on_the_allow_list(): void
+    {
+        ($this->mint())('totally-not-a-voice');
+
+        $this->assertNull($this->app->make(FakeRealtimeVoiceProvider::class)->lastCall()?->voiceOverride);
+    }
+
     public function test_it_passes_getusermedia_constraints_through_from_config(): void
     {
         // Defaults (config/ai.php): all three on.

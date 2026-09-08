@@ -37,7 +37,7 @@
             var pc = null, micStream = null, audioCtx = null, analyser = null;
             var timerId = null, beatId = null, speaking = 0;
             var muted = false, remainingSeconds = null, status = 'Hazır';
-            var inputDeviceId = null, outputDeviceId = null;
+            var inputDeviceId = null, outputDeviceId = null, selectedVoice = null;
             var activeInputId = null;
             var outputSupported = ('setSinkId' in HTMLMediaElement.prototype);
             var deviceError = false, deviceLost = false;
@@ -65,6 +65,7 @@
                     if (d.type === 'devices') {
                         inputDeviceId = d.inputId || null;
                         outputDeviceId = d.outputId || null;
+                        selectedVoice = d.voiceId || null;
                         applyOutputDevice();
                         return;
                     }
@@ -129,7 +130,15 @@
                 try {
                     var r = await fetch(endpoint, {
                         method: 'POST',
-                        headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' }
+                        headers: {
+                            'X-CSRF-TOKEN': csrf,
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        },
+                        // The chosen voice is validated server-side against the
+                        // config allow-list; an unknown value falls back to the
+                        // default (male) voice.
+                        body: JSON.stringify({ voice: selectedVoice || null })
                     });
                     if (!r.ok) throw 0;
                     s = await r.json();

@@ -12,10 +12,10 @@ class RealtimeSessionTokenTest extends TestCase
 {
     public function test_it_exposes_only_neutral_keys_and_no_standing_credential(): void
     {
-        $token = new RealtimeSessionToken('ek_abc123', 1_900_000_000, 'gpt-realtime', 'marin');
+        $token = new RealtimeSessionToken('ek_abc123', 1_900_000_000, 'gpt-realtime', 'cedar');
 
         $this->assertSame(
-            ['client_secret' => 'ek_abc123', 'expires_at' => 1_900_000_000, 'model' => 'gpt-realtime', 'voice' => 'marin'],
+            ['client_secret' => 'ek_abc123', 'expires_at' => 1_900_000_000, 'model' => 'gpt-realtime', 'voice' => 'cedar'],
             $token->toArray(),
         );
         $this->assertArrayNotHasKey('api_key', $token->toArray());
@@ -25,21 +25,21 @@ class RealtimeSessionTokenTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new RealtimeSessionToken('   ', 1_900_000_000, 'gpt-realtime', 'marin');
+        new RealtimeSessionToken('   ', 1_900_000_000, 'gpt-realtime', 'cedar');
     }
 
     public function test_it_rejects_a_client_secret_that_looks_like_a_standing_api_key(): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new RealtimeSessionToken('sk-proj-not-an-ephemeral-secret', 1_900_000_000, 'gpt-realtime', 'marin');
+        new RealtimeSessionToken('sk-proj-not-an-ephemeral-secret', 1_900_000_000, 'gpt-realtime', 'cedar');
     }
 
     public function test_it_rejects_a_non_positive_expiry(): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new RealtimeSessionToken('ek_abc123', 0, 'gpt-realtime', 'marin');
+        new RealtimeSessionToken('ek_abc123', 0, 'gpt-realtime', 'cedar');
     }
 
     public function test_it_rejects_a_blank_model_or_voice(): void

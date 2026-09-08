@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
+use App\AI\Providers\Fake\FakeRealtimeVoiceProvider;
 use App\AI\Providers\Fake\FakeTextProvider;
+use App\AI\Providers\OpenAi\OpenAiRealtimeProvider;
 use App\AI\Providers\OpenAi\OpenAiTextProvider;
 
 return [
@@ -99,6 +101,51 @@ return [
                 // set OPENAI_TEXT_SEND_SAMPLING=true only for a GPT-4-class
                 // deployment that should honour the neutral `temperature`.
                 'send_sampling_params' => (bool) env('OPENAI_TEXT_SEND_SAMPLING', false),
+            ],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Realtime voice (studio live prototype — TASK-0007)
+    |--------------------------------------------------------------------------
+    | A separate capability from `text`: a live browser<->AI Turkish voice
+    | conversation for the /studio/live prototype. Transport is WebRTC; the
+    | Laravel backend only mints a SHORT-LIVED ephemeral client secret from the
+    | standing OPENAI_API_KEY (which never reaches the browser).
+    |
+    | `driver`: unset / "fake" = an offline stub (local / CI / tests); "openai"
+    | = the real OpenAI Realtime API.
+    */
+    'realtime' => [
+        'driver' => env('AI_REALTIME_DRIVER', 'fake'),
+
+        // Hard cap the browser enforces before it auto-disconnects a session.
+        'session_max_seconds' => (int) env('STUDIO_LIVE_MAX_SECONDS', 600),
+
+        // Where the browser POSTs its WebRTC SDP offer (Bearer = ephemeral
+        // secret). A vendor URL, declared here — never hardcoded in JS/PHP.
+        'webrtc_url' => env('OPENAI_REALTIME_WEBRTC_URL', 'https://api.openai.com/v1/realtime/calls'),
+
+        // The AI's standing brief for the studio voice prototype. Overridable
+        // via env for tuning without a deploy.
+        'instructions' => env('STUDIO_LIVE_INSTRUCTIONS', 'Sen bir canlı Türk televizyon programında, stüdyodaki insan sunucuyla Türkçe sesli olarak tartışan bir yapay zekâ konuşmacısısın. Doğal, akıcı ve kesintisiz konuş; kısa, net cümleler kur. Önce sunucuyu dinle, sonra yanıt ver. Karşıt görüşleri nazik ama kararlı biçimde savun ve gerekçelendir. Her koşulda yalnızca Türkçe konuş.'),
+
+        'drivers' => [
+            'fake' => FakeRealtimeVoiceProvider::class,
+            'openai' => OpenAiRealtimeProvider::class,
+        ],
+
+        'connections' => [
+            'fake' => [],
+            'openai' => [
+                'api_key' => env('OPENAI_API_KEY'),
+                // The adapter appends `/realtime/client_secrets`.
+                'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+                'model' => env('OPENAI_REALTIME_MODEL', 'gpt-realtime'),
+                'voice' => env('OPENAI_REALTIME_VOICE', 'marin'),
+                'timeout' => (int) env('OPENAI_REALTIME_TIMEOUT', 15),
+                'connect_timeout' => (int) env('OPENAI_REALTIME_CONNECT_TIMEOUT', 10),
             ],
         ],
     ],

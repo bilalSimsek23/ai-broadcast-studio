@@ -1,6 +1,6 @@
 # Project context — AI Broadcast Studio
 
-_Last updated: 2026-09-07 (TASK-0006 OpenAI adapter + Episode text rehearsal)_
+_Last updated: 2026-09-08 (TASK-0007 studio live realtime voice prototype)_
 
 ## What it is
 
@@ -64,28 +64,31 @@ _Not modelled yet (later tasks):_
 ## Non-goals (for now)
 
 - No public viewer accounts / viewer-facing web app.
-- No real-time websocket/broadcasting infrastructure until a live-session
-  feature is actually scheduled.
-- No voice (STT/TTS) until explicitly tasked; interfaces are reserved, not built.
+- No websocket/broadcasting (Reverb/Pusher) infrastructure. (TASK-0007's
+  `/studio/live` voice prototype uses browser WebRTC straight to OpenAI with a
+  backend-minted ephemeral key — no realtime server, no broadcasting.)
+- No STT/TTS transcription; the realtime voice prototype plays audio only, no
+  transcript. Broader voice (recorded TTS, STT pipelines) still untasked.
 - No multi-tenant / white-label concerns yet.
 - No CI/CD pipeline definition yet (planned, not in bootstrap).
 
 ## Current phase
 
-**OpenAI adapter + Episode text rehearsal (TASK-0006).** Done so far: bootstrap,
+**Studio live realtime voice prototype (TASK-0007).** Done so far: bootstrap,
 TASK-0001 core domain, TASK-0002 static-analysis baseline, TASK-0003 Filament
 admin, TASK-0004 episode preparation workspace, TASK-0005 vendor-neutral
-text-generation foundation (`app/AI/**`). TASK-0006 adds the **first real AI
-interaction** on top of that foundation: a real **OpenAI Chat Completions
-adapter** behind `TextGenerationProvider` (env-gated — logical keys stay
-vendor-neutral; credentials only from env), a **prompt-assembly service**
-(`AssembleRehearsalPrompt`) that builds a request from existing Episode /
-AiPersona / topic / question data, and a Filament **"AI Provası"** page
-(`RehearseEpisode`) on the Episode preparation workflow that generates and
-displays one persona response. See `.agents/architecture.md` §2e.
-**Rehearsal only** — nothing is persisted; **still no** conversation history,
-live-session runtime, STT/TTS, realtime broadcast, studio display, avatar/
-lip-sync, or conversation engine.
+text-generation foundation (`app/AI/**`), TASK-0006 real OpenAI text adapter
+(Responses API, env-gated) + `AssembleRehearsalPrompt` + the Filament "AI
+Provası" rehearsal page. TASK-0007 adds the **first realtime feature**: an
+admin-only full-screen `/studio/live` page where the studio host and the AI
+hold an uninterrupted spoken **Turkish** debate — browser mic ↔ OpenAI
+Realtime over **WebRTC**, with the API key minted into a short-lived ephemeral
+secret by the Laravel backend (never sent to the browser). Orb-only UI, no
+text/transcript, 10-minute auto-end. A separate `RealtimeVoiceProvider`
+capability (`fake` default driver, `openai` in prod). See
+`.agents/architecture.md` §2f. **Prototype only** — nothing persisted; **still
+no** transcript/history, per-session spend caps, Episode/persona coupling,
+STT, studio display, avatar, or conversation engine.
 
 ## Environment facts
 

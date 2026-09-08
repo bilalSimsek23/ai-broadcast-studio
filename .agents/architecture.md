@@ -1,7 +1,7 @@
 # Architecture — AI Broadcast Studio
 
-_Last updated: 2026-09-07 (TASK-0006 OpenAI adapter + Episode text rehearsal).
-Section 2 and its module split are the **target** shape; §§2a–2e record what is
+_Last updated: 2026-09-08 (TASK-0007 studio live realtime voice prototype).
+Section 2 and its module split are the **target** shape; §§2a–2f record what is
 actually built._
 
 ## 1. Stack
@@ -139,9 +139,12 @@ or the deletion policy. Invariants live in the models/DB; the UI mirrors them:
 TASK-0006: the vendor-neutral *text* foundation (§2d), a **real OpenAI adapter**
 behind the contract, a rehearsal **prompt-assembly** service, and a Filament
 **"AI Provası"** page that generates one persona response from an Episode's
-editorial data (§2e). Still missing: other vendor adapters, the analogous voice
-(STT/TTS) resolver, realtime, studio display, conversation history, and the live
-conversation engine. Persona binding columns still hold logical keys only.
+editorial data (§2e). TASK-0007 adds a **realtime voice prototype** — the
+admin-only `/studio/live` page: browser mic ↔ OpenAI Realtime (Turkish),
+WebRTC + backend-minted ephemeral key, orb-only UI (§2f). Still missing:
+STT/TTS transcription, studio display / avatar, conversation history/transcript
+persistence, per-session spend caps, and coupling the realtime session to an
+Episode's persona + brief. Persona binding columns still hold logical keys only.
 
 **Not yet built:** everything in the bullet above, plus a public/viewer web
 app, queue workers config, CI.
@@ -370,6 +373,63 @@ token footnote. `ProviderException | AiConfigurationException` → `report()` + 
 generic Turkish danger notification (no credentials, no raw vendor error).
 Double-submit guarded via `wire:target` + `wire:loading.attr="disabled"`.
 
+## 2f. Studio live realtime voice prototype — as built (TASK-0007)
+
+The first realtime feature. A full-screen `/studio/live` page for an
+uninterrupted spoken **Turkish** debate between the studio host and the AI —
+mic in, voice out, a pulsing orb, **no text / no transcript**. This is where
+CLAUDE.md §2.9 "no premature realtime infra" is deliberately lifted; it stays
+minimal (WebRTC only, no realtime server, no broadcasting).
+
+**Decisions:** standalone (no Episode/AiPersona coupling yet) · admin-only ·
+WebRTC + ephemeral key · 10-minute auto-end.
+
+```
+Browser mic  ─▶  RTCPeerConnection  ──(SDP, Bearer=ephemeral secret)──▶  OpenAI Realtime  ─▶  <audio> + AnalyserNode ─▶ orb
+     ▲                                                                        ▲
+     │   POST /studio/live/session (admin, throttled)                         │
+     └── StudioLiveController → MintStudioSession → RealtimeVoiceProvider ─────┘
+                                    (OpenAiRealtimeProvider mints the ephemeral secret from the standing key)
+```
+
+**Capability (separate from §2d text):**
+`app/AI/Contracts/RealtimeVoiceProvider::createClientSession(RealtimeSessionRequest): RealtimeSessionToken`.
+- `RealtimeSessionRequest` — `instructions` + optional `voiceOverride`.
+- `RealtimeSessionToken` — `clientSecret` (short-lived ephemeral), `expiresAt`,
+  `model`, `voice`. Constructor **rejects a `sk-…` value** (leak guard);
+  `toArray()` never carries a standing credential.
+- `OpenAiRealtimeProvider` (`app/AI/Providers/OpenAi/`) — `POST
+  {base}/realtime/client_secrets`, standing key as Bearer, `session` body
+  (`type`/`model`/`instructions`/`audio.output.voice`); parses flat and nested
+  secret shapes; `retry(1)` + timeouts; same `ProviderException` family as
+  §2e (no key/URL/free-text in messages). The standing key never leaves the
+  process.
+- `FakeRealtimeVoiceProvider` (`app/AI/Providers/Fake/`) — offline default
+  driver; deterministic `ek_fake_…` secret.
+- `MintStudioSession` + `StudioSession` (`app/AI/Realtime/`) — thin service:
+  reads the standing Turkish brief + 10-min cap + WebRTC URL from
+  `config('ai.realtime')`, calls the bound provider, returns
+  `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url}`.
+- `AiServiceProvider` binds all three; driver from `config('ai.realtime.driver')`
+  (`fake` default, `openai` in prod).
+
+**HTTP** (`routes/web.php`, `App\Http\Controllers\StudioLiveController`,
+`App\Http\Middleware\EnsureStudioOperator`):
+`GET /studio/live` (full-screen Blade) and `POST /studio/live/session`
+(`throttle:12,1`, `ProviderException` → `report()` + generic `503
+{error:"realtime_unavailable"}`). Both admin-gated — guest → `/admin/login`
+(or 401 JSON), non-admin → 403.
+
+**Frontend** — `resources/views/studio/live.blade.php`, standalone dark page,
+inline vanilla JS, no build step: `getUserMedia` → `RTCPeerConnection` → SDP
+exchange with the ephemeral secret; remote audio drives a `<canvas>` orb via an
+`AnalyserNode`; 10-min countdown auto-hangs-up; Turkish status line; Bağlan /
+Görüşmeyi bitir.
+
+**Config** — `config/ai.php` → `ai.realtime` (`driver`, `session_max_seconds`,
+`webrtc_url`, `instructions`, `drivers`, `connections.openai` reusing
+`OPENAI_API_KEY` / `OPENAI_BASE_URL`). All env keys in `.env.example`.
+
 ## 3. Key boundaries
 
 ### AI provider abstraction (see CLAUDE.md §5)
@@ -381,17 +441,22 @@ Domain code ──▶ GenerateText ──▶ LogicalModelResolver ──▶ Text
                                                    (app/AI/Providers/Fake)   (app/AI/Providers/<Vendor>)
 ```
 
-- **Built (TASK-0005 §2d, TASK-0006 §2e):** the interface, neutral DTOs,
-  `config('ai.text')`, the `LogicalModelResolver`, `GenerateText`, the
-  deterministic `FakeTextProvider`, a real `OpenAiTextProvider` (env-gated), the
-  `ProviderException` / `ProviderTimeoutException` / `ProviderRequestException`
-  translation hierarchy, `AssembleRehearsalPrompt`, and the "AI Provası"
-  rehearsal page. Characters store a **logical name**, never a vendor.
+- **Built (TASK-0005 §2d, TASK-0006 §2e, TASK-0007 §2f):** the text interface,
+  neutral DTOs, `config('ai.text')`, the `LogicalModelResolver`, `GenerateText`,
+  the deterministic `FakeTextProvider`, a real `OpenAiTextProvider` (env-gated),
+  the `ProviderException` / `ProviderTimeoutException` /
+  `ProviderRequestException` translation hierarchy, `AssembleRehearsalPrompt`,
+  the "AI Provası" rehearsal page, and — separately — the realtime voice
+  capability (`RealtimeVoiceProvider` + `OpenAiRealtimeProvider` /
+  `FakeRealtimeVoiceProvider` + `MintStudioSession` + `/studio/live`).
+  Characters store a **logical name**, never a vendor.
 - **Not built yet:** other vendor adapters; `ProviderRateLimitException` /
   `ProviderContentFilteredException` (429/filter are `ProviderRequestException`
   cases today); a `Routing\ProviderCoordinator` in front of the interface for
   fallback / circuit breaking / per-session / per-character budgets (done once,
-  not per call site); conversation history and the live conversation engine.
+  not per call site); conversation history / transcript persistence; coupling
+  the realtime session to an Episode persona + brief; the live conversation
+  engine.
 
 ### Session lifecycle
 

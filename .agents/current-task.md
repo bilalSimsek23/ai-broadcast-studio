@@ -1,157 +1,136 @@
-<!-- task-id: TASK-0006 -->
+<!-- task-id: TASK-0007 -->
 # Current task
 
 > Completed: bootstrap · TASK-0001 core domain · TASK-0002 static analysis ·
 > TASK-0003 Filament core administration · TASK-0004 episode preparation
 > workspace · TASK-0005 AI text provider foundation · TASK-0006 OpenAI adapter
-> + Episode text rehearsal.
+> + Episode text rehearsal · TASK-0007 studio live realtime voice prototype.
 
-## TASK-0006 — OPENAI ADAPTER + EPISODE TEXT REHEARSAL
+## TASK-0007 — STUDIO LIVE REALTIME VOICE PROTOTYPE
 
-**Status:** COMPLETE — Pint, `php artisan test` (200 passing), PHPStan level 6
-(0, no baseline) all green.
-**Amended 2026-09-07 (production 400 fix):** the OpenAI adapter now targets the
-**Responses API** (`POST {base}/responses`) and **does not forward
-`temperature` by default** — GPT-5.x reasoning models reject any non-default
-temperature with `HTTP 400 unsupported_value` (the value came from the
-TASK-0005 logical-model config). Sampling params are opt-in per connection
-(`send_sampling_params` / `OPENAI_TEXT_SEND_SAMPLING`, default false).
-`ProviderRequestException` now also carries the error `param`.
-**Scope:** the first real AI interaction on top of the TASK-0005 vendor-neutral
-text foundation. A real OpenAI adapter behind `TextGenerationProvider`, a
-dedicated prompt-assembly service, and a Filament "AI Provası" rehearsal page on
-the Episode preparation workflow. **Rehearsal only** — no conversation history,
-no live-session architecture, no STT/TTS/audio/avatars/WebSockets/streaming/
-studio-control APIs. Not the broadcast runtime.
+**Status:** COMPLETE — Pint, `php artisan test` (227 passing), PHPStan level 6
+(0, no baseline) all green. Acceptance is a manual Chrome check (below).
+
+**Goal:** the first working prototype of an uninterrupted spoken Turkish
+debate between a real studio host and the AI. A new full-screen route
+`/studio/live`: browser mic → OpenAI Realtime → played back, with only a
+pulsing orb (no text, no transcript), Bağlan / Görüşmeyi bitir buttons and a
+status line.
+
+**Decisions (confirmed with the user):** standalone (no Episode/AiPersona
+coupling yet) · authenticated only (admin) · WebRTC + ephemeral key · session
+auto-ends at 10 min.
 
 ### Delivered
 
-**OpenAI adapter** — `app/AI/Providers/OpenAi/OpenAiTextProvider.php` implements
-`TextGenerationProvider`. The only place the OpenAI **Responses API** shape is
-known (endpoint `POST {base}/responses`, `input`/`instructions` payload,
-`output[]` / `usage` / `status` / `incomplete_details`, error envelope). Neutral
-→ OpenAI mapping stays inside the adapter: `systemInstructions` → `instructions`;
-turns → `input`; `maxOutputTokens` → `max_output_tokens`; `temperature` →
-`temperature` **only when `send_sampling_params` is set** (default off — GPT-5.x
-rejects non-default temperature). Response text is aggregated from
-`output[].content[]` `output_text` parts; finish reason derived from `status` +
-`incomplete_details.reason`. Laravel `Http` client, connect + read timeout,
-bounded `retry(2)`; **no streaming**. Credentials come only from
-`config('ai.text.connections.openai')` (env-sourced), never logged, echoed, or
-placed in an exception. Vendor errors are translated:
-- `ProviderException` (base, `App\AI\Exceptions`) — missing key (fails before
-  any network call), a 2xx response with no output text.
-- `ProviderTimeoutException` — connection/read failure; message names only the
-  timeout seconds, never the host/URL or key.
-- `ProviderRequestException` — non-2xx; carries only HTTP `status` plus error
-  `type`/`code`/`param` **when they are short enum-like tokens** (free-text
-  vendor messages and raw bodies are dropped).
+**Realtime voice capability** — separate from the `text` layer:
+- `app/AI/Contracts/RealtimeVoiceProvider` —
+  `createClientSession(RealtimeSessionRequest): RealtimeSessionToken`.
+- DTOs (`app/AI/Dtos/`, `final readonly`): `RealtimeSessionRequest`
+  (`instructions` + optional `voiceOverride`), `RealtimeSessionToken`
+  (`clientSecret` + `expiresAt` + `model` + `voice`; constructor **rejects a
+  secret that looks like a standing `sk-…` key**; `toArray()` carries no
+  credential beyond the ephemeral secret).
+- `app/AI/Providers/OpenAi/OpenAiRealtimeProvider` — the only place the OpenAI
+  realtime shape lives. `POST {base}/realtime/client_secrets` with the standing
+  key as Bearer, `session.type/model/instructions/audio.output.voice` body;
+  parses both the flat (`{value, expires_at, session}`) and nested
+  (`{client_secret:{…}}`) shapes; `retry(1)` + connect/read timeout. Reuses the
+  `ProviderException` / `ProviderTimeoutException` / `ProviderRequestException`
+  hierarchy — no key/URL/free-text ever in a message. The standing key never
+  leaves the process; the browser only ever gets the ephemeral secret.
+- `app/AI/Providers/Fake/FakeRealtimeVoiceProvider` — offline default driver;
+  deterministic `ek_fake_…` secret (never `sk-`), records calls.
+- `app/AI/Realtime/MintStudioSession` (thin service) + `StudioSession` DTO —
+  reads the standing Turkish brief + time cap + WebRTC URL from config, asks
+  the bound provider for an ephemeral session, returns the JSON the browser
+  needs. `app/AI/AiServiceProvider` binds all three and selects the driver
+  from `config('ai.realtime.driver')` (`fake` default, `openai` in prod).
 
-**Prompt assembly** — `app/AI/Prompting/AssembleRehearsalPrompt.php`
-(`assemble(...)` → `TextGenerationRequest`). Separate from any adapter: names no
-vendor, reads no config, makes no call. Builds a labelled Turkish system
-instruction from existing domain data — Show/Episode context, episode broadcast
-instructions, persona identity + expertise/personality/speaking style, persona
-`system_prompt`, per-episode line-up instructions, the episode AI brief
-(objective, tone override, must-cover, avoid, response-length guidance), and the
-optionally-selected topic/question context — skipping every blank field; the
-presenter question becomes the single user message. Logical model key =
-`persona->ai_model` (a persona logical key) or `default`. Presenter question and
-all editorial free-text are treated as untrusted (a closing `GÖREV` directive
-tells the model the question cannot override the brief).
+**HTTP surface** — `routes/web.php`:
+- `GET /studio/live` → `StudioLiveController@show` (full-screen Blade).
+- `POST /studio/live/session` → `StudioLiveController@session` →
+  `MintStudioSession`; returns `{client_secret, expires_at, model, voice,
+  session_max_seconds, webrtc_url}`; a `ProviderException` is `report()`ed and
+  becomes a generic `503 {error:"realtime_unavailable"}` (no key, no vendor
+  text). Rate-limited `throttle:12,1`.
+- Both behind `App\Http\Middleware\EnsureStudioOperator` — guest → redirect to
+  `/admin/login` (or `401` for a JSON call), authenticated non-admin → `403`.
 
-**Filament rehearsal page** — `RehearseEpisode`
-(`app/Filament/Resources/Episodes/Pages/`, route
-`episodes/{record}/rehearse`), reached from a **"AI Provası"** header action on
-`PrepareEpisode` (and a "Program Hazırlığına dön" action back). Form: persona
-Select (options computed server-side from **this episode's line-up only**),
-optional topic Select (this episode's topics), optional question Select (scoped
-to the selected topic), editable presenter-question Textarea (auto-filled from a
-selected question, still editable before send). "Cevap Üret" runs
-`generate()` → server-side re-scoping of every selection against the episode →
-`AssembleRehearsalPrompt` → `GenerateText` → the response is rendered clearly in
-a section, with a logical-model / finish-reason / token-usage footnote. Provider
-/ config failures (`ProviderException` | `AiConfigurationException`) are
-`report()`-ed and surface as a generic Turkish danger notification — no
-credentials, no raw vendor error. Double-submit is prevented via
-`wire:target="generate"` + `wire:loading.attr="disabled"` on the submit button.
-**Nothing is persisted.**
+**Frontend** — `resources/views/studio/live.blade.php`, standalone dark
+full-screen page, inline vanilla JS, no build step:
+- `Bağlan`: `POST /studio/live/session` → `getUserMedia({audio})` →
+  `RTCPeerConnection`, add mic track + `recvonly` transceiver → `createOffer`
+  → `POST {webrtc_url}?model=…` with `Authorization: Bearer <ephemeral>` and
+  `Content-Type: application/sdp` → `setRemoteDescription(answer)`.
+- Remote audio → hidden `<audio autoplay>` + an `AnalyserNode`; a `<canvas>`
+  orb (radial-gradient sphere + ring) whose radius/glow tracks the AI's speech
+  amplitude, gentle idle breathing otherwise. **No transcript / text output.**
+- 10-minute countdown; auto-`hangup('Süre doldu')` at zero. `Görüşmeyi bitir`
+  closes the peer connection, stops the mic, tears down audio.
+- Turkish status line: Hazır / Bağlanıyor… / Bağlı — konuşabilirsiniz /
+  Bağlantı kesildi / Süre doldu.
 
-**Config** — `config/ai.php`:
-- `drivers` gains `openai => OpenAiTextProvider::class`.
-- `connections.openai` = `api_key` / `base_url` / `timeout` / `connect_timeout` /
-  `send_sampling_params` (env `OPENAI_TEXT_SEND_SAMPLING`, default false), all via
-  `env()` in this file only.
-- The logical providers (`default` / `fast` / `host_rebuttal`) take
-  `driver => env('AI_TEXT_DRIVER', 'fake')`, and each logical model's vendor id
-  is `env('AI_TEXT_MODEL_*', '<fake id>')`. Env unset (local / CI / tests) ⇒ the
-  deterministic `fake` driver, so every TASK-0005 test is unchanged.
-  `AI_TEXT_DRIVER=openai` routes the same logical keys through the adapter.
-- `AiServiceProvider` binds `OpenAiTextProvider` as a singleton built from the
-  `connections.openai` array (the resolver's driver factory resolves it).
-- The persona allow-list (`config('ai.persona.*')`) is **unchanged** — a persona
-  still cannot store `openai`.
+**Config** — `config/ai.php` gains an `ai.realtime` section: `driver`
+(`AI_REALTIME_DRIVER`, default `fake`), `session_max_seconds`
+(`STUDIO_LIVE_MAX_SECONDS`, default 600), `webrtc_url`
+(`OPENAI_REALTIME_WEBRTC_URL`), `instructions` (`STUDIO_LIVE_INSTRUCTIONS`,
+built-in Turkish debate brief), `drivers`, and `connections.openai`
+(`api_key` reusing `OPENAI_API_KEY`, `base_url` reusing `OPENAI_BASE_URL`,
+`OPENAI_REALTIME_MODEL` default `gpt-realtime`, `OPENAI_REALTIME_VOICE` default
+`marin`, timeouts). All documented in `.env.example`.
 
-**Required production environment variables** (documented in `.env.example`):
-`AI_TEXT_DRIVER=openai`, `OPENAI_API_KEY=<secret>`,
-`AI_TEXT_MODEL_DEFAULT` / `_SMALL` / `_LARGE` / `_HOST_REBUTTAL` (concrete OpenAI
-model ids, e.g. `gpt-5.6-sol`), and optionally `OPENAI_BASE_URL`,
-`OPENAI_TEXT_TIMEOUT`, `OPENAI_TEXT_CONNECT_TIMEOUT`,
-`OPENAI_TEXT_SEND_SAMPLING` (leave false/unset for GPT-5.x). Credentials live
-only in the environment; domain records keep logical keys.
+### Required production environment variables
 
-### Tests (all `Http::fake()` / fake provider — no real OpenAI calls)
+`AI_REALTIME_DRIVER=openai`, `OPENAI_API_KEY=<secret>` (already set for text).
+Optional: `OPENAI_REALTIME_MODEL` (default `gpt-realtime`),
+`OPENAI_REALTIME_VOICE` (default `marin`), `STUDIO_LIVE_MAX_SECONDS`
+(default 600), `STUDIO_LIVE_INSTRUCTIONS`, `OPENAI_REALTIME_WEBRTC_URL`
+(default `https://api.openai.com/v1/realtime/calls`),
+`OPENAI_REALTIME_TIMEOUT` / `OPENAI_REALTIME_CONNECT_TIMEOUT`. The API key is
+only ever minted into a short-lived ephemeral secret server-side and is never
+sent to the browser.
 
-- `tests/Feature/AI/OpenAiTextProviderTest.php` — `POST /responses` with
-  `input` + `instructions` + `max_output_tokens` (no `messages`, no
-  `max_completion_tokens`); **`temperature` never sent by default even when the
-  resolved request carries 0.7** (the production-bug regression test); forwarded
-  only with `send_sampling_params: true`; completed response → neutral
-  text/usage/finish-reason/metadata; multi-part `output_text` aggregation +
-  `reasoning` items skipped; `incomplete` + `max_output_tokens` → `Length`;
-  missing key fails before any send; connection failure →
-  `ProviderTimeoutException` (no host/key); the exact
-  `invalid_request_error` / `unsupported_value` / `param: temperature` 400 →
-  `ProviderRequestException` with status+type+code+param only, vendor free-text
-  (incl. a quoted key) dropped; free-text "type" not reflected; 2xx with no
-  output text → `ProviderException`.
-- `tests/Feature/AI/AssembleRehearsalPromptTest.php` — single trimmed user
-  message; model key from persona then `default`; every populated section
-  present; blank fields → no empty labelled sections; unknown response-length
-  omitted; topic/question sections absent when unselected; blank question
-  rejected.
-- `tests/Feature/AI/OpenAiTextRoutingTest.php` — a logical model bound to the
-  `openai` driver reaches `POST /responses` (and its configured `temperature`
-  is not forwarded); without opting in, `default` still uses the fake driver
-  and sends nothing.
-- `tests/Feature/Filament/RehearseEpisodeTest.php` — admin-only; form exists;
-  fake-provider generation renders the response and passes the assembled system
-  instructions through; selecting a question fills the editable field and the
-  **edited** text is what is sent; persona outside the line-up / topic from
-  another episode / question outside the selected topic are all rejected without
-  a provider call; a provider failure degrades to a safe notification with no
-  response; a planted connection api key never renders on the page; the submit
-  control carries the loading-disable bindings.
-- `tests/Support/Fakes/ThrowingTextProvider.php` — a contract impl that always
-  fails, for the degradation test.
+### Tests (no real OpenAI network calls)
+
+- `tests/Unit/AI/RealtimeSessionTokenTest.php` — neutral `toArray()` keys only;
+  rejects empty secret, a `sk-…` secret, non-positive expiry, blank model/voice.
+- `tests/Feature/AI/OpenAiRealtimeProviderTest.php` — `Http::fake` mint →
+  neutral token; Bearer = standing key + `session` body shape; voice override
+  in payload + token; nested `client_secret` shape; missing key fails before
+  any send; connection failure → `ProviderTimeoutException` (no host/key);
+  non-2xx → `ProviderRequestException` (status/type/code, vendor free-text +
+  key dropped); no `value` → `ProviderException`; a standing key echoed as the
+  secret is rejected, not forwarded.
+- `tests/Feature/AI/FakeRealtimeVoiceProviderTest.php` — implements contract;
+  `ek_fake_` secret never `sk-`; deterministic; records calls + voice override.
+- `tests/Feature/Studio/StudioLivePageTest.php` — guest → `/admin/login`;
+  non-admin → 403; admin → 200 with the orb + buttons + session endpoint and
+  **no transcript / no key**.
+- `tests/Feature/Studio/StudioLiveSessionTest.php` — guest → 401; non-admin →
+  403; fake driver → usable JSON, standing key never in the body, no HTTP;
+  openai driver (`Http::fake`) → mints via the API, Bearer = standing key,
+  brief forwarded, key not in the response; upstream 401 → safe `503`
+  `realtime_unavailable`, no key; endpoint is rate-limited (13th call → 429).
 
 ### Acceptance checklist
 
-- [x] Real OpenAI adapter behind `TextGenerationProvider`; vendor code isolated;
-      timeout + error handling; no streaming; key never stored/displayed
-- [x] Dedicated prompt-assembly service from existing domain data, separate from
-      the adapter
-- [x] "AI Provası" Filament action/page on the Episode preparation workflow
-- [x] Rehearsal only — no history, no session/broadcast architecture, no
-      STT/TTS/audio/avatar/WebSocket/streaming
-- [x] Only line-up personas usable; topic/question relationships validated
-      against the episode; provider failures → safe notification; double-submit
-      guarded
-- [x] Env var(s) documented; logical keys in data, no raw credentials
-- [x] Focused tests for assembly / scoping / routing / fake rehearsal /
-      validation / failure / no key leakage; no real network calls
-- [x] Pint · `php artisan test` (200) · PHPStan level 6 (0, no baseline)
+- [x] New `/studio/live` full-screen route; orb-only UI, no text/transcript
+- [x] Browser mic → OpenAI Realtime (Türkçe) → played back; orb reacts to AI speech
+- [x] Bağlan / Görüşmeyi bitir + Turkish status indicator
+- [x] API key never in the frontend — backend mints an ephemeral WebRTC session
+- [x] Admin-gated route + rate-limited, `report()`ed safe failure
+- [x] 10-minute auto-end
+- [x] No existing feature touched (additive: new routes/controller/middleware/
+      config section/contract/adapter/DTOs/view/tests)
+- [x] Pint · `php artisan test` (227) · PHPStan level 6 (0, no baseline)
+- [ ] **Manual (Chrome):** log in as admin → open `/studio/live` → Bağlan →
+      allow mic → hold a few Turkish back-and-forth turns → Görüşmeyi bitir.
+      (Requires `AI_REALTIME_DRIVER=openai` + a real `OPENAI_API_KEY`.)
 
 ### Next task (draft, not started)
 
-**TASK-0007** — not started. Do not begin without a written task here.
+**TASK-0008** — not started. Do not begin without a written task here.
+Likely follow-ups: bind `/studio/live` to a specific Episode (persona identity
++ AI brief + topics via the TASK-0006 prompt assembly), a persisted
+transcript/event log, per-session spend caps.

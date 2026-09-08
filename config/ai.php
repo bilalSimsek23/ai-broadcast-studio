@@ -120,8 +120,11 @@ return [
     'realtime' => [
         'driver' => env('AI_REALTIME_DRIVER', 'fake'),
 
-        // Hard cap the browser enforces before it auto-disconnects a session.
-        'session_max_seconds' => (int) env('STUDIO_LIVE_MAX_SECONDS', 600),
+        // Hard cap (seconds) the browser enforces before it auto-disconnects a
+        // session — the single source of truth for the session length. Default
+        // 20 minutes; raise it (e.g. 1800–2400) from the environment for longer
+        // broadcast rehearsals. The service clamps to [30, 3600].
+        'session_max_seconds' => (int) env('STUDIO_LIVE_MAX_SECONDS', 1200),
 
         // Where the browser POSTs its WebRTC SDP offer (Bearer = ephemeral
         // secret). A vendor URL, declared here — never hardcoded in JS/PHP.

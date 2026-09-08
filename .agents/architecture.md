@@ -141,7 +141,8 @@ behind the contract, a rehearsal **prompt-assembly** service, and a Filament
 **"AI Provası"** page that generates one persona response from an Episode's
 editorial data (§2e). TASK-0007 adds a **realtime voice prototype** — the
 admin-only `/studio/live` page: browser mic ↔ OpenAI Realtime (Turkish),
-WebRTC + backend-minted ephemeral key, orb-only UI (§2f). Still missing:
+WebRTC + backend-minted ephemeral key, orb-only clean view, 20-min
+config-driven session cap (§2f). Still missing:
 STT/TTS transcription, studio display / avatar, conversation history/transcript
 persistence, per-session spend caps, and coupling the realtime session to an
 Episode's persona + brief. Persona binding columns still hold logical keys only.
@@ -382,7 +383,7 @@ CLAUDE.md §2.9 "no premature realtime infra" is deliberately lifted; it stays
 minimal (WebRTC only, no realtime server, no broadcasting).
 
 **Decisions:** standalone (no Episode/AiPersona coupling yet) · admin-only ·
-WebRTC + ephemeral key · 10-minute auto-end.
+WebRTC + ephemeral key · 20-minute auto-end (config, up to 60).
 
 ```
 Browser mic  ─▶  RTCPeerConnection  ──(SDP, Bearer=ephemeral secret)──▶  OpenAI Realtime  ─▶  <audio> + AnalyserNode ─▶ orb
@@ -407,9 +408,12 @@ Browser mic  ─▶  RTCPeerConnection  ──(SDP, Bearer=ephemeral secret)─�
 - `FakeRealtimeVoiceProvider` (`app/AI/Providers/Fake/`) — offline default
   driver; deterministic `ek_fake_…` secret.
 - `MintStudioSession` + `StudioSession` (`app/AI/Realtime/`) — thin service:
-  reads the standing Turkish brief + 10-min cap + WebRTC URL from
-  `config('ai.realtime')`, calls the bound provider, returns
+  reads the standing Turkish brief + session cap
+  (`config('ai.realtime.session_max_seconds')`, default 1200s, clamped
+  [30, 3600]) + WebRTC URL, calls the bound provider, returns
   `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url}`.
+  The session length lives ONLY here — the browser uses the value from this
+  response, never its own copy.
 - `AiServiceProvider` binds all three; driver from `config('ai.realtime.driver')`
   (`fake` default, `openai` in prod).
 
@@ -423,8 +427,12 @@ Browser mic  ─▶  RTCPeerConnection  ──(SDP, Bearer=ephemeral secret)─�
 **Frontend** — `resources/views/studio/live.blade.php`, standalone dark page,
 inline vanilla JS, no build step: `getUserMedia` → `RTCPeerConnection` → SDP
 exchange with the ephemeral secret; remote audio drives a `<canvas>` orb via an
-`AnalyserNode`; 10-min countdown auto-hangs-up; Turkish status line; Bağlan /
-Görüşmeyi bitir.
+`AnalyserNode`; countdown length = the response's `session_max_seconds` (no
+literal in the page); at zero, one `hangup()` path (also used by `Görüşmeyi
+bitir`) closes the peer, stops playback and releases the mic. **Clean broadcast
+view** (`Yayın görünümü` → `body.clean`) hides controls/status/countdown —
+orb only — without touching the timer or auto-close; `Esc`/click returns.
+Turkish status line.
 
 **Config** — `config/ai.php` → `ai.realtime` (`driver`, `session_max_seconds`,
 `webrtc_url`, `instructions`, `drivers`, `connections.openai` reusing

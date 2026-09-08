@@ -27,7 +27,7 @@
             position: absolute; top: -2.75rem; left: 50%; transform: translateX(-50%);
             font-variant-numeric: tabular-nums; font-size: .95rem; color: #7f97b0;
         }
-        #controls { display: flex; gap: 1rem; margin-top: 2.5rem; }
+        #controls { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; margin-top: 2.5rem; }
         button {
             appearance: none; border: 1px solid rgba(150, 190, 240, .35);
             background: rgba(30, 60, 100, .35); color: #e8f0fa;
@@ -38,20 +38,37 @@
         button:disabled { opacity: .5; cursor: default; }
         #hangup { border-color: rgba(240, 150, 150, .4); background: rgba(120, 40, 40, .35); }
         #hangup:hover { background: rgba(150, 55, 55, .5); }
+        #broadcast { border-color: rgba(150, 190, 240, .25); background: rgba(20, 40, 70, .3); }
+        #hint {
+            position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+            font-size: .8rem; letter-spacing: .03em; color: #7c90a6;
+            background: rgba(5, 10, 18, .6); padding: .4rem .9rem; border-radius: 999px;
+            pointer-events: none;
+        }
+        /* Clean broadcast view: only the orb. Operator controls, status text and
+           the countdown are hidden — but the session time limit and its
+           auto-close keep running. */
+        body.clean { cursor: none; }
+        body.clean #controls,
+        body.clean #status,
+        body.clean #timer { display: none !important; }
         [hidden] { display: none !important; }
     </style>
 </head>
 <body>
     <div id="stage">
         <canvas id="orb" aria-hidden="true"></canvas>
-        <span id="timer" hidden>10:00</span>
+        <span id="timer" hidden>--:--</span>
         <p id="status" role="status" aria-live="polite">Hazır</p>
     </div>
 
     <div id="controls">
         <button id="connect" type="button">Bağlan</button>
+        <button id="broadcast" type="button" hidden>Yayın görünümü</button>
         <button id="hangup" type="button" hidden>Görüşmeyi bitir</button>
     </div>
+
+    <p id="hint" hidden>Kontrollere dönmek için Esc'e basın</p>
 
     <audio id="sink" autoplay hidden></audio>
 
@@ -64,7 +81,7 @@
             var dpr = window.devicePixelRatio || 1;
 
             var pc = null, micStream = null, audioCtx = null, analyser = null;
-            var timerId = null, speaking = 0;
+            var timerId = null, hintTimer = null, speaking = 0;
             var freq = new Uint8Array(128);
 
             function setStatus(t) { $('status').textContent = t; }
@@ -127,7 +144,11 @@
 
                 $('connect').hidden = true;
                 $('hangup').hidden = false;
-                startTimer(Number(s.session_max_seconds) || 600);
+                $('broadcast').hidden = false;
+                // The only source of truth for the session length is the backend
+                // config (config('ai.realtime.session_max_seconds')); the browser
+                // never carries its own copy.
+                startTimer(s.session_max_seconds);
             }
 
             function listen(stream) {
@@ -141,6 +162,9 @@
             }
 
             function startTimer(total) {
+                total = Number(total);
+                if (!isFinite(total) || total <= 0) { hangup('Yapılandırma hatası'); return; }
+
                 var left = total;
                 $('timer').hidden = false;
                 var tick = function () {
@@ -153,21 +177,49 @@
                 timerId = setInterval(tick, 1000);
             }
 
+            // Single clean-shutdown path — used both on "Görüşmeyi bitir" and on
+            // the session time limit expiring: close the peer connection, stop
+            // playback, release the microphone, restore the operator view.
             function hangup(reason) {
                 if (timerId) { clearInterval(timerId); timerId = null; }
                 if (pc) { try { pc.close(); } catch (e) {} pc = null; }
                 if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
                 if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
                 analyser = null;
-                $('sink').srcObject = null;
+
+                var sink = $('sink');
+                try { sink.pause(); } catch (e) {}
+                sink.srcObject = null;
+
+                exitClean();
                 $('timer').hidden = true;
+                $('broadcast').hidden = true;
                 $('hangup').hidden = true;
                 $('connect').hidden = false;
                 $('connect').disabled = false;
                 setStatus(reason || 'Görüşme bitti');
             }
 
-            // --- orb -------------------------------------------------------
+            // --- clean broadcast view -----------------------------------------
+            function peekHint() {
+                $('hint').hidden = false;
+                if (hintTimer) clearTimeout(hintTimer);
+                hintTimer = setTimeout(function () { $('hint').hidden = true; }, 2200);
+            }
+            function enterClean() { document.body.classList.add('clean'); peekHint(); }
+            function exitClean() {
+                document.body.classList.remove('clean');
+                if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+                $('hint').hidden = true;
+            }
+            function isClean() { return document.body.classList.contains('clean'); }
+
+            $('broadcast').addEventListener('click', function (e) { e.stopPropagation(); enterClean(); });
+            document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isClean()) exitClean(); });
+            document.addEventListener('click', function () { if (isClean()) exitClean(); });
+            document.addEventListener('mousemove', function () { if (isClean()) peekHint(); });
+
+            // --- orb ---------------------------------------------------------
             var canvas = $('orb'), g2d = canvas.getContext('2d');
             function resize() {
                 var d = Math.min(window.innerWidth, window.innerHeight) * 0.62;

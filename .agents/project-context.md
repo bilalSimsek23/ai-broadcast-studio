@@ -83,9 +83,11 @@ Provası" rehearsal page. TASK-0007 adds the **first realtime feature**: an
 admin-only full-screen `/studio/live` page where the studio host and the AI
 hold an uninterrupted spoken **Turkish** debate — browser mic ↔ OpenAI
 Realtime over **WebRTC**, with the API key minted into a short-lived ephemeral
-secret by the Laravel backend (never sent to the browser). Orb-only UI, no
-text/transcript, 10-minute auto-end. A separate `RealtimeVoiceProvider`
-capability (`fake` default driver, `openai` in prod). See
+secret by the Laravel backend (never sent to the browser). No text/transcript;
+a clean broadcast view can hide the operator controls leaving only the orb.
+**20-minute** session cap (config `STUDIO_LIVE_MAX_SECONDS`, default 1200,
+raisable to 60 min; the browser reads the value from the backend). A separate
+`RealtimeVoiceProvider` capability (`fake` default driver, `openai` in prod). See
 `.agents/architecture.md` §2f. **Prototype only** — nothing persisted; **still
 no** transcript/history, per-session spend caps, Episode/persona coupling,
 STT, studio display, avatar, or conversation engine.

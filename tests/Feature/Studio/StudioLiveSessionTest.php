@@ -56,16 +56,35 @@ class StudioLiveSessionTest extends TestCase
     public function test_the_default_fake_driver_returns_a_usable_session_and_never_a_standing_key(): void
     {
         config()->set('ai.realtime.connections.openai.api_key', self::STANDING_KEY);
-        config()->set('ai.realtime.session_max_seconds', 480);
         $this->actingAsAdmin();
 
         $response = $this->postJson('/studio/live/session')->assertOk();
 
         $response->assertJsonStructure(['client_secret', 'expires_at', 'model', 'voice', 'session_max_seconds', 'webrtc_url']);
-        $response->assertJsonPath('session_max_seconds', 480);
         $this->assertStringStartsWith('ek_fake_', (string) $response->json('client_secret'));
         $this->assertStringNotContainsString(self::STANDING_KEY, $response->getContent() ?: '');
         Http::assertNothingSent();
+    }
+
+    public function test_the_default_session_length_is_twenty_minutes(): void
+    {
+        // No override: the config default (config/ai.php) is the source of truth.
+        $this->actingAsAdmin();
+
+        $this->postJson('/studio/live/session')
+            ->assertOk()
+            ->assertJsonPath('session_max_seconds', 1200);
+    }
+
+    public function test_the_session_length_is_configurable_including_longer_rehearsals(): void
+    {
+        $this->actingAsAdmin();
+
+        config()->set('ai.realtime.session_max_seconds', 2400); // 40-minute rehearsal
+        $this->postJson('/studio/live/session')->assertOk()->assertJsonPath('session_max_seconds', 2400);
+
+        config()->set('ai.realtime.session_max_seconds', 480); // shorter
+        $this->postJson('/studio/live/session')->assertOk()->assertJsonPath('session_max_seconds', 480);
     }
 
     public function test_the_openai_driver_mints_via_the_api_and_the_standing_key_stays_server_side(): void

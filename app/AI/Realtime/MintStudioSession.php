@@ -23,8 +23,12 @@ final readonly class MintStudioSession
 
     private const FALLBACK_WEBRTC_URL = 'https://api.openai.com/v1/realtime/calls';
 
+    /** Mirrors the config('ai.realtime.session_max_seconds') default (20 min). */
+    private const DEFAULT_SECONDS = 1200;
+
     private const MIN_SECONDS = 30;
 
+    /** 60 min — headroom for 30–40 min broadcast rehearsals set via config. */
     private const MAX_SECONDS = 3600;
 
     public function __construct(
@@ -42,7 +46,7 @@ final readonly class MintStudioSession
         $token = $this->provider->createClientSession(new RealtimeSessionRequest($instructions));
 
         $maxSeconds = $this->config->get('ai.realtime.session_max_seconds');
-        $maxSeconds = is_int($maxSeconds) ? $maxSeconds : 600;
+        $maxSeconds = is_int($maxSeconds) ? $maxSeconds : self::DEFAULT_SECONDS;
         $maxSeconds = max(self::MIN_SECONDS, min($maxSeconds, self::MAX_SECONDS));
 
         $webrtcUrl = $this->config->get('ai.realtime.webrtc_url');

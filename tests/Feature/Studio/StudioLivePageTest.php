@@ -35,6 +35,16 @@ class StudioLivePageTest extends TestCase
         $response->assertSee('Görüşmeyi bitir');
         $response->assertSee('/studio/live/session', escape: false);
 
+        // Clean broadcast view toggle + the shared clean-shutdown path used on
+        // both "Görüşmeyi bitir" and the session time limit expiring.
+        $response->assertSee('Yayın görünümü');
+        $response->assertSee('body.clean', escape: false);
+        $response->assertSee('Süre doldu');
+
+        // No hardcoded session length in the page — it comes from the backend.
+        $response->assertSee('startTimer(s.session_max_seconds)', escape: false);
+        $response->assertDontSee('|| 600', escape: false);
+
         // Rehearsal/transcript UI must not be present, and no credential leaks.
         $response->assertDontSee('transcript');
         $response->assertDontSee('OPENAI_API_KEY');

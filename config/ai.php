@@ -130,9 +130,17 @@ return [
         // secret). A vendor URL, declared here — never hardcoded in JS/PHP.
         'webrtc_url' => env('OPENAI_REALTIME_WEBRTC_URL', 'https://api.openai.com/v1/realtime/calls'),
 
-        // The AI's standing brief for the studio voice prototype. Overridable
-        // via env for tuning without a deploy.
+        // FALLBACK brief for a STANDALONE (no episode) session. The normal
+        // production flow binds a Ready Episode and builds the instructions
+        // from its prepared content (App\AI\Prompting\AssembleEpisodeBriefing).
+        // This string is only used when a session is opened with no episode.
         'instructions' => env('STUDIO_LIVE_INSTRUCTIONS', 'Sen bir canlı Türk televizyon programında, stüdyodaki insan sunucuyla Türkçe sesli olarak tartışan bir yapay zekâ konuşmacısısın. Doğal, akıcı ve kesintisiz konuş; kısa, net cümleler kur. Önce sunucuyu dinle, sonra yanıt ver. Karşıt görüşleri nazik ama kararlı biçimde savun ve gerekçelendir. Her koşulda yalnızca Türkçe konuş.'),
+
+        // Whether POST /studio/live/session may open a session with NO episode
+        // (the standalone fallback above). OFF by default: a normal admin
+        // studio session must select a Ready episode. Turn on only for local
+        // development / an explicit diagnostic.
+        'allow_standalone_session' => (bool) env('STUDIO_LIVE_ALLOW_STANDALONE', false),
 
         // The voices the director may pick from on the Studio Control page. The
         // request is validated against these KEYS server-side before it is sent

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Filament;
 
+use App\Enums\EpisodeStatus;
+use App\Models\AiPersona;
+use App\Models\Episode;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -31,10 +34,17 @@ class StudioControlPageTest extends TestCase
         $response = $this->get('/admin/studio-control')->assertOk();
 
         // Section cards + operator info block
+        $response->assertSee('Yayın Hazırlığı');
+        $response->assertSee('Yayın Bölümü');
         $response->assertSee('Ses Yönlendirme');
         $response->assertSee('Canlı Oturum');
         $response->assertSee('Operatör Bilgisi');
         $response->assertSee('Yayın Ekranı');
+
+        // Episode + persona selection ride the same BroadcastChannel message.
+        $response->assertSee('episodeUuid', escape: false);
+        $response->assertSee('personaUuid', escape: false);
+        $response->assertSee('studio.control.episodeUuid', escape: false);
 
         // Transport + mute controls
         $response->assertSee('BAĞLAN');
@@ -77,5 +87,24 @@ class StudioControlPageTest extends TestCase
         $response->assertDontSee('OPENAI_API_KEY');
         $response->assertDontSee('client_secret');
         $response->assertDontSee('sk-');
+    }
+
+    public function test_only_ready_episodes_are_offered_for_broadcast(): void
+    {
+        $this->actingAs(User::factory()->admin()->create());
+
+        $ready = Episode::factory()->scheduled()->create(['title' => 'READY-EPISODE-TITLE']);
+        $ready->show()->update(['name' => 'READY-SHOW']);
+        $ready->lineup()->create(['ai_persona_id' => AiPersona::factory()->create()->id, 'sort_order' => 0]);
+
+        Episode::factory()->create(['status' => EpisodeStatus::Draft, 'title' => 'DRAFT-EPISODE-TITLE']);
+        Episode::factory()->create(['status' => EpisodeStatus::Preparing, 'title' => 'PREPARING-EPISODE-TITLE']);
+
+        $response = $this->get('/admin/studio-control')->assertOk();
+
+        $response->assertSee('READY-EPISODE-TITLE');
+        $response->assertSee('READY-SHOW');
+        $response->assertDontSee('DRAFT-EPISODE-TITLE');
+        $response->assertDontSee('PREPARING-EPISODE-TITLE');
     }
 }

@@ -12,11 +12,26 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
+/**
+ * These cases exercise session MECHANICS (auth, rate limit, audio constraints,
+ * session length, voice, upstream failure) via the STANDALONE fallback path
+ * (no episode bound). Episode-bound production behaviour is
+ * {@see StudioLiveEpisodeSessionTest}.
+ */
 class StudioLiveSessionTest extends TestCase
 {
     use RefreshDatabase;
 
     private const STANDING_KEY = 'CANARY-openai-standing-key-must-not-leak';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Allow a no-episode session so these mechanics tests do not each need
+        // a full Ready-episode fixture.
+        config()->set('ai.realtime.allow_standalone_session', true);
+    }
 
     private function actingAsAdmin(): void
     {

@@ -94,10 +94,16 @@ minted server-side (never in the browser); config-driven studio noise handling
 `noise_reduction` + a mild `server_vad` raise, barge-in kept). **20-minute**
 session cap (config `STUDIO_LIVE_MAX_SECONDS`, default 1200, up to 60 min; the
 browser reads it from the backend). A separate `RealtimeVoiceProvider`
-capability (`fake` default, `openai` in prod). See `.agents/architecture.md`
-§2f. **Prototype only** — nothing persisted; **still no** transcript/history,
-per-session spend caps, Episode/persona coupling, STT, studio display, avatar,
-or conversation engine.
+capability (`fake` default, `openai` in prod). A live session **binds a
+prepared, Ready Episode + one line-up persona** (chosen in Studio Control,
+validated server-side by `ResolveStudioEpisode`, no silent fallback): the AI
+starts already knowing the show, its persona identity, the episode topic +
+brief and every discussion topic/question, via the **shared
+`AssembleEpisodeBriefing`** (also used by the rehearsal tool). Presenter-only
+notes are excluded. No new DB / model / migration. See
+`.agents/architecture.md` §2f. **Still no** transcript/history, per-session
+spend caps, a human-host model, a persona→realtime-voice resolver, STT, studio
+display, avatar, or conversation engine.
 
 ## Environment facts
 

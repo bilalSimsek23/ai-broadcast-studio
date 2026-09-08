@@ -144,10 +144,14 @@ admin-only clean broadcast page (`/studio/live`, orb only) plus a Filament
 operator console (`/admin/studio-control`, transport + mute + physical audio
 device selectors), synced over a browser `BroadcastChannel`; browser mic ↔
 OpenAI Realtime (Turkish) over WebRTC with a backend-minted ephemeral key,
-config-driven studio noise tuning, 20-min config session cap (§2f). Still
-missing: STT/TTS transcription, studio display / avatar, conversation
-history/transcript persistence, per-session spend caps, and coupling the
-realtime session to an Episode's persona + brief. Persona binding columns still
+config-driven studio noise tuning, 20-min config session cap, and — since the
+Episode-integration task — a session that binds a **Ready Episode + line-up
+persona** so the AI opens the conversation already knowing the show, its own
+persona, the episode topic/brief and every discussion topic + question
+(shared `AssembleEpisodeBriefing`) (§2f). Still missing: STT/TTS transcription,
+studio display / avatar, conversation history/transcript persistence,
+per-session spend caps, a human-host model, and a persona `voice_id` → realtime
+voice resolver. Persona binding columns still
 hold logical keys only.
 
 **Not yet built:** everything in the bullet above, plus a public/viewer web
@@ -389,18 +393,22 @@ is deliberately lifted; it stays minimal — WebRTC only, no realtime server, no
 broadcasting; the two layers sync over a browser `BroadcastChannel`, never the
 server.
 
-**Decisions:** standalone (no Episode/AiPersona coupling yet) · admin-only ·
-WebRTC + ephemeral key · 20-minute auto-end (config, up to 60) · physical audio
-device discovery + deviceId management entirely in the reji browser.
+**Decisions:** admin-only · WebRTC + ephemeral key · 20-minute auto-end
+(config, up to 60) · physical audio device discovery + deviceId management
+entirely in the reji browser · **a session binds a prepared, Ready Episode +
+one line-up persona** (no episode ⇒ refused unless
+`config('ai.realtime.allow_standalone_session')`) · no new DB / model /
+migration.
 
 ```
 /admin/studio-control  ──BroadcastChannel('studio-live')──►  /studio/live  (owns mic + RTCPeerConnection + <audio>)
- (device selectors, transport,        cmd / devices                │  getUserMedia({deviceId:{exact}, EC/NS/AGC})
-  mute, state readouts; no media)  ◄──── state (1s heartbeat) ─────┤  RTCPeerConnection ──(SDP, Bearer=ephemeral)──► OpenAI Realtime
-  deviceIds in localStorage                                        │  <audio>.setSinkId(outputId) ─► AnalyserNode ─► orb
-                                                                   └── POST /studio/live/session (admin, throttled)
-                                                                         → MintStudioSession → RealtimeVoiceProvider
-                                                                           (OpenAiRealtimeProvider mints the ephemeral secret)
+ (episode + persona + device           cmd / devices              │  getUserMedia({deviceId:{exact}, EC/NS/AGC})
+  selectors, transport, mute;      {…, episodeUuid, personaUuid}   │  RTCPeerConnection ──(SDP, Bearer=ephemeral)──► OpenAI Realtime
+  no media)                       ◄──── state (1s heartbeat) ─────┤  <audio>.setSinkId(outputId) ─► AnalyserNode ─► orb
+  choices in localStorage                                         └── POST /studio/live/session {voice, episode, persona} (admin, throttled)
+                                                                        → ResolveStudioEpisode (422 on any invalid selection)
+                                                                        → MintStudioSession(voice, context) → RealtimeVoiceProvider
+                                                                          instructions = AssembleEpisodeBriefing + fixed live directive
 ```
 
 **Capability (separate from §2d text):**
@@ -419,29 +427,48 @@ device discovery + deviceId management entirely in the reji browser.
 - `FakeRealtimeVoiceProvider` (`app/AI/Providers/Fake/`) — offline default
   driver; deterministic `ek_fake_…` secret.
 - `MintStudioSession` + `StudioSession` (`app/AI/Realtime/`) — thin service:
-  reads the standing brief + session cap
-  (`config('ai.realtime.session_max_seconds')`, default 1200s, clamped
-  [30, 3600]) + WebRTC URL + getUserMedia constraints, validates a
-  director-requested voice against `config('ai.realtime.voices')` (unknown →
-  provider default, a **male** voice), calls the bound provider, returns
-  `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url,
-  audio_constraints}`. Session length + constraints live ONLY here — the
-  browser uses the response values, never its own copy.
-- `AiServiceProvider` binds all three; driver from `config('ai.realtime.driver')`
-  (`fake` default, `openai` in prod), passing `config('ai.realtime.audio.*')`
-  tuning to the OpenAI adapter.
+  `__invoke(?string $voice, ?StudioEpisodeContext $ctx)`. With a context the
+  instructions are `AssembleEpisodeBriefing::forEpisode(...)` + a fixed
+  `REALTIME_DIRECTIVE` (live-broadcast behaviour: name the persona not
+  "ChatGPT", the counterpart is "the presenter", no re-brief, no chatbot
+  closings, follow response-length, allow barge-in, don't invent facts).
+  Without a context it falls back to `config('ai.realtime.instructions')`
+  (standalone). Reads session cap (`config('ai.realtime.session_max_seconds')`,
+  default 1200s, clamped [30, 3600]) + WebRTC URL + getUserMedia constraints;
+  validates a director-requested voice against `config('ai.realtime.voices')`
+  (unknown → provider default, a **male** voice); returns `{client_secret,
+  expires_at, model, voice, session_max_seconds, webrtc_url, audio_constraints}`.
+  Session length + constraints live ONLY here.
+- `AssembleEpisodeBriefing` (`app/AI/Prompting/`) — the ONE provider-independent
+  "everything about this prepared episode" builder (Show + Episode + persona +
+  slot + every topic/question, in `sort_order`; presenter-only fields
+  excluded). **Reused by rehearsal** (§2e — `AssembleRehearsalPrompt` delegates
+  to it and adds its selected-topic emphasis + `GÖREV`) **and by realtime**.
+- `ResolveStudioEpisode` + `StudioEpisodeContext` + `StudioEpisodeUnavailable`
+  (`app/AI/Realtime/`) — the domain validator: episode given / exists / Ready;
+  ≥1 line-up persona; a persona UUID required only for a multi-persona line-up;
+  a given persona must be in THIS line-up. No silent fallback — each failure is
+  a `422 {error, message}` at the controller.
+- `AiServiceProvider` binds the providers; driver from
+  `config('ai.realtime.driver')` (`fake` default, `openai` in prod), passing
+  `config('ai.realtime.audio.*')` tuning to the OpenAI adapter. The briefing /
+  resolver / service are plain autowired classes.
 
 **HTTP** (`routes/web.php`, `StudioLiveController`, `EnsureStudioOperator`):
 `GET /studio/live` (clean broadcast Blade) and `POST /studio/live/session`
-(`throttle:12,1`, `ProviderException` → `report()` + generic `503`). Both
-admin-gated. The Filament `App\Filament\Pages\StudioControl`
-(`/admin/studio-control`) is auto-discovered and panel-gated + `canAccess()`.
+(body `{voice?, episode?, persona?}`; `throttle:12,1`; `ResolveStudioEpisode` →
+`422 {error, message}` on any invalid selection; `ProviderException` →
+`report()` + generic `503`). Both admin-gated. The Filament
+`App\Filament\Pages\StudioControl` (`/admin/studio-control`) is auto-discovered
+and panel-gated + `canAccess()`; its `getViewData()` lists Ready episodes with
+their line-ups.
 
 **Broadcast layer** (`resources/views/studio/live.blade.php`) — a `<canvas>`
 orb + hidden `<audio>` + inline vanilla JS, nothing else visible. Sole owner of
 `getUserMedia` / `RTCPeerConnection` / the sink. Listens on
 `BroadcastChannel('studio-live')` for `cmd` (connect/hangup/mute/unmute) and
-`devices` (input/output deviceId + `voiceId`, sent in the mint `POST` body);
+`devices` (input/output deviceId + `voiceId` + `episodeUuid` + `personaUuid`,
+forwarded as `{voice, episode, persona}` in the mint `POST` body);
 publishes `state` (connected, muted,
 remainingSeconds, status, inputActive, outputSupported, deviceError,
 deviceLost) every second (heartbeat) + on change. `getUserMedia` with a chosen
@@ -460,23 +487,30 @@ so it is styled by Filament's shipped stylesheet **without** the app's Vite /
 Tailwind build (panel pages don't load `resources/css/app.css`); a small
 page-scoped plain-CSS `<style>` handles the wide 2-column desktop layout
 (`$maxContentWidth = Width::SevenExtraLarge`), the 3 status tiles and the
-alerts. It provides `enumerateDevices()` for `audioinput` / `audiooutput`
-(same-name disambiguation, permission-grant affordance), the **AI Ses Girişi** /
-**AI Ses Çıkışı** selectors + an **AI Sesi** voice picker (options from
-`config('ai.realtime.voices')`, default `cedar` / male, disabled while
-connected), "Cihazları Yenile" + `ondevicechange` auto-refresh, `localStorage`
-deviceId + voice persistence (per reji machine, **never server config**), the
-four transport/mute buttons, a typed connection badge, 3 status tiles
-(Bağlantı / Mikrofon / Kalan süre), and a "Yayın Ekranı" banner +
-`deviceLost` critical alert.
+alerts. It provides a **Yayın Hazırlığı** section — a Ready-episode `<select>`
++ a **Canlı AI Karakteri** `<select>` (only for multi-persona line-ups; single
+persona auto-selected, `sort_order` first default) + a Program/Bölüm/Ana
+Konu/AI Karakteri/Yayın Durumu summary — plus `enumerateDevices()` for
+`audioinput` / `audiooutput` (same-name disambiguation, permission-grant
+affordance), the **AI Ses Girişi** / **AI Ses Çıkışı** selectors + an **AI
+Sesi** voice picker (options from `config('ai.realtime.voices')`, default
+`cedar` / male, disabled while connected), "Cihazları Yenile" +
+`ondevicechange` auto-refresh, `localStorage` persistence of deviceIds + voice
++ episode + persona (per reji machine, **never server config**), the four
+transport/mute buttons (BAĞLAN disabled until an episode + persona are chosen),
+a typed connection badge, 3 status tiles (Bağlantı / Mikrofon / Kalan süre),
+and a "Yayın Ekranı" banner + `deviceLost` critical alert.
 
 **Config** — `config/ai.php` → `ai.realtime`: `driver`, `session_max_seconds`,
-`webrtc_url`, `instructions`, **`voices`** (allow-list for the picker; default
-`cedar`, male), **`audio`** (`constraints.{echoCancellation,noiseSuppression,
-autoGainControl}`, `noise_reduction`, `turn_detection.{threshold,
-prefix_padding_ms,silence_duration_ms}`), `drivers`, `connections.openai`
-(`voice` default `cedar`). Every key `env()`-overridable and in `.env.example`.
-Physical deviceIds are never here — browser localStorage only.
+`webrtc_url`, `instructions` (**standalone-fallback brief only**),
+`allow_standalone_session` (`STUDIO_LIVE_ALLOW_STANDALONE`, **default false** —
+a normal session must bind a Ready episode), **`voices`** (allow-list for the
+picker; default `cedar`, male), **`audio`** (`constraints.{echoCancellation,
+noiseSuppression,autoGainControl}`, `noise_reduction`,
+`turn_detection.{threshold,prefix_padding_ms,silence_duration_ms}`), `drivers`,
+`connections.openai` (`voice` default `cedar`). Every key `env()`-overridable
+and in `.env.example`. Physical deviceIds / episode / persona choices are never
+here — browser localStorage only.
 
 ## 3. Key boundaries
 
@@ -493,12 +527,15 @@ Domain code ──▶ GenerateText ──▶ LogicalModelResolver ──▶ Text
   neutral DTOs, `config('ai.text')`, the `LogicalModelResolver`, `GenerateText`,
   the deterministic `FakeTextProvider`, a real `OpenAiTextProvider` (env-gated),
   the `ProviderException` / `ProviderTimeoutException` /
-  `ProviderRequestException` translation hierarchy, `AssembleRehearsalPrompt`,
+  `ProviderRequestException` translation hierarchy, `AssembleEpisodeBriefing`
+  (the shared Episode→context string builder), `AssembleRehearsalPrompt` +
   the "AI Provası" rehearsal page, and — separately — the realtime voice
   capability (`RealtimeVoiceProvider` + `OpenAiRealtimeProvider` /
-  `FakeRealtimeVoiceProvider` + `MintStudioSession`, the `/studio/live` clean
-  broadcast page and the `StudioControl` Filament operator console, synced over
-  a browser `BroadcastChannel` — no server realtime/audio relay).
+  `FakeRealtimeVoiceProvider` + `MintStudioSession` + `ResolveStudioEpisode`,
+  the `/studio/live` clean broadcast page and the `StudioControl` Filament
+  operator console, synced over a browser `BroadcastChannel` — no server
+  realtime/audio relay). A live session binds a **Ready Episode + line-up
+  persona** and its prepared content becomes the realtime instructions.
   Characters store a **logical name**, never a vendor.
 - **Not built yet:** other vendor adapters; `ProviderRateLimitException` /
   `ProviderContentFilteredException` (429/filter are `ProviderRequestException`

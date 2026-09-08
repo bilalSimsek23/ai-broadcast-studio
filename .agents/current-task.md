@@ -8,10 +8,10 @@
 
 ## TASK-0007 — STUDIO LIVE REALTIME VOICE PROTOTYPE
 
-**Status:** COMPLETE — Pint, `php artisan test` (247 passing), PHPStan level 6
-(0, no baseline) all green. Real Chrome / microphone / multi-device / visual
-acceptance is MANUAL and has NOT been run automatically (Blade renders + JS
-syntax verified only).
+**Status:** COMPLETE — Pint, `php artisan test` (270 passing), PHPStan level 6
+(0, no baseline) all green. Real Chrome / microphone / multi-device / visual /
+end-to-end voice acceptance is MANUAL and has NOT been run automatically (Blade
+renders + JS `node --check` + PHPUnit only).
 
 **Amendments after the first live prova (2026-09-08):**
 1. Session cap **20 min** (`STUDIO_LIVE_MAX_SECONDS` default 1200); the browser
@@ -49,16 +49,52 @@ syntax verified only).
    layout, `$maxContentWidth = Width::SevenExtraLarge`, status tiles, typed
    connection badge, styled "Yayın Ekranı" banner. No production asset-pipeline
    bug found — Filament serves its own CSS and it was already loading.
+7. **Episode Preparation → Realtime integration (production flow).** A live
+   session is now bound to a prepared, **Ready** Episode + its speaking persona,
+   and the AI starts the conversation already knowing everything editorial. No
+   new DB / model / migration. Pieces:
+   - `app/AI/Prompting/AssembleEpisodeBriefing` — the ONE provider-independent
+     "everything about this prepared episode" string builder (Show + Episode +
+     persona + slot + full topics/questions). `AssembleRehearsalPrompt` now
+     delegates to it and only adds its single-question emphasis + `GÖREV`;
+     realtime uses the same builder + a fixed `CANLI YAYIN GÖREVİ` directive.
+     Presenter-only fields (`opening_notes` / `key_points` / `questions_to_push`
+     / `closing_notes`, `EpisodeTopic.presenter_notes`,
+     `EpisodeQuestion.presenter_notes`) are deliberately excluded.
+   - `app/AI/Realtime/ResolveStudioEpisode` + `StudioEpisodeContext` +
+     `StudioEpisodeUnavailable` — domain-level validation (episode given /
+     exists / Ready; ≥1 line-up persona; a persona UUID required only when the
+     line-up has >1; a given persona must be in THIS line-up). No silent
+     fallback — the controller returns a `422 {error, message}`.
+   - `MintStudioSession::__invoke(?string $voice, ?StudioEpisodeContext $ctx)` —
+     with a context it builds the briefing + directive; without one it falls
+     back to `config('ai.realtime.instructions')` (standalone), gated by
+     `config('ai.realtime.allow_standalone_session')` (env
+     `STUDIO_LIVE_ALLOW_STANDALONE`, **default false**).
+   - `StudioLiveController::session()` reads `episode` + `persona` from the body,
+     resolves+validates, mints. `StudioControl` page: "Yayın Hazırlığı" section
+     — Ready-episode `<select>` (label "Program — Bölüm N — Başlık") + a
+     "Canlı AI Karakteri" `<select>` shown only for multi-persona line-ups
+     (single persona auto-selected, `sort_order` first as default) + a summary
+     (Program / Bölüm / Ana Konu / AI Karakteri / Yayın Durumu). Both persisted
+     browser-local and sent as `episodeUuid` / `personaUuid` on the same
+     `BroadcastChannel` `devices` message; `/studio/live` forwards `episode` /
+     `persona` in the mint `POST`. BAĞLAN disabled until an episode + persona
+     are chosen. Episode/persona selectors disable once connected.
+   - **Real demo Episode briefing size:** 10 650 characters / ~2 170 words —
+     comfortably within OpenAI Realtime `session.instructions` limits; **no
+     truncation applied.**
 
 **Goal:** the first working prototype of an uninterrupted spoken Turkish debate
 between a real studio host and the AI, split into a **clean broadcast layer**
 (`/studio/live`, orb only) and an **operator layer** (Filament) in the same
 browser.
 
-**Decisions (confirmed with the user):** standalone (no Episode/AiPersona
-coupling yet) · authenticated only (admin) · WebRTC + ephemeral key · session
-auto-ends at 20 min (config, up to 60) · device discovery + deviceId management
-entirely in the reji browser (never Laravel).
+**Decisions (confirmed with the user):** authenticated only (admin) · WebRTC +
+ephemeral key · session auto-ends at 20 min (config, up to 60) · device
+discovery + deviceId management entirely in the reji browser (never Laravel) ·
+**a live session binds a Ready Episode + one line-up persona; no episode ⇒
+refused (unless `allow_standalone_session`)** · no new DB / model / migration.
 
 ### Architecture (E / G)
 
@@ -112,11 +148,15 @@ control on another).
 **HTTP surface** — `routes/web.php`:
 - `GET /studio/live` → `StudioLiveController@show` — the clean broadcast Blade
   (orb only).
-- `POST /studio/live/session` → `MintStudioSession`; returns
+- `POST /studio/live/session` (body `{voice?, episode?, persona?}`) →
+  `ResolveStudioEpisode` (→ `422 {error, message}` on any invalid selection,
+  NO silent fallback) → `MintStudioSession($voice, $context)`; returns
   `{client_secret, expires_at, model, voice, session_max_seconds, webrtc_url,
   audio_constraints:{echoCancellation,noiseSuppression,autoGainControl}}`; a
   `ProviderException` is `report()`ed → generic `503
   {error:"realtime_unavailable"}` (no key/vendor text). `throttle:12,1`.
+  Missing `episode` → `422 episode_required` unless
+  `config('ai.realtime.allow_standalone_session')`.
 - Both behind `App\Http\Middleware\EnsureStudioOperator` — guest → `/admin/login`
   (or `401` JSON), non-admin → `403`.
 - The Filament page **`App\Filament\Pages\StudioControl`** (`/admin/studio-control`)
@@ -146,17 +186,21 @@ grid/tiles/alerts; wide desktop layout `Width::SevenExtraLarge`, 2-column
 Ses Yönlendirme | Canlı Oturum cards, 3 status tiles, typed connection badge,
 "Yayın Ekranı" banner with an "aç" button). Behaviour: device permission
 handling + `enumerateDevices()` for `audioinput` / `audiooutput` with same-name
-disambiguation; **AI Ses Girişi** / **AI Ses Çıkışı** selects + **AI Sesi**
-select (options from
-`config('ai.realtime.voices')`, default `cedar` / male, disabled while
-connected); "Cihazları Yenile" + `mediaDevices.ondevicechange`
-auto-refresh; localStorage persistence (`studio.control.inputDeviceId` /
-`…outputDeviceId` / `…voiceId`) reloaded on open, auto-selected if still
-present, else a "yeniden seçin" prompt; the voice + deviceIds ride the same
-`{type:'devices', inputId, outputId, voiceId}` BroadcastChannel message and
-`/studio/live` sends the voice in the mint `POST` body (validated server-side);
-**Bağlan** (disabled until broadcast alive + an input
-chosen) / **Görüşmeyi bitir** / **Mikrofonu sessize al** / **Mikrofonu aç**;
+disambiguation; a **Yayın Hazırlığı** section — **Yayın Bölümü** `<select>`
+(Ready episodes only, label "Program — Bölüm N — Başlık") + **Canlı AI
+Karakteri** `<select>` (shown only for multi-persona line-ups; single persona
+auto-selected, `sort_order` first as default) + a Program / Bölüm / Ana Konu /
+AI Karakteri / Yayın Durumu summary; **AI Ses Girişi** / **AI Ses Çıkışı**
+selects + **AI Sesi** select (options from `config('ai.realtime.voices')`,
+default `cedar` / male, disabled while connected); "Cihazları Yenile" +
+`mediaDevices.ondevicechange` auto-refresh; localStorage persistence
+(`studio.control.inputDeviceId` / `…outputDeviceId` / `…voiceId` /
+`…episodeUuid` / `…personaUuid`) reloaded on open, auto-selected/synced;
+the voice + deviceIds + `episodeUuid` + `personaUuid` ride the same
+`{type:'devices', …}` BroadcastChannel message and `/studio/live` sends
+`{voice, episode, persona}` in the mint `POST` body (all validated
+server-side); **Bağlan** (disabled until broadcast alive + input + episode +
+persona) / **Görüşmeyi bitir** / **Mikrofonu sessize al** / **Mikrofonu aç**;
 readouts for Bağlantı / Mikrofon (AÇIK·SESSİZ) / Kalan süre / Durum; critical
 red banner on `deviceLost`, error on `deviceError`, "Bu tarayıcı ses çıkışı
 seçimini desteklemiyor" when `outputSupported === false`.
@@ -177,13 +221,27 @@ prefix_padding_ms, silence_duration_ms}` (`STUDIO_LIVE_VAD_THRESHOLD` 0.6 /
 `_PREFIX_MS` 300 / `_SILENCE_MS` 500). `OpenAiRealtimeProvider` folds the
 `noise_reduction` + `server_vad` tuning (with `create_response` +
 `interrupt_response` always true) into `session.audio.input`; empty when
-unconfigured. `drivers` + `connections.openai` unchanged. `.env.example`
-documents every key. **Physical deviceIds are NEVER server config** — they live
-only in the reji browser's localStorage.
+unconfigured. `drivers` + `connections.openai` unchanged. **`allow_standalone_session`**
+(`STUDIO_LIVE_ALLOW_STANDALONE`, **default false**) gates whether a session may
+open with no episode; `instructions` is now only the standalone fallback brief.
+`.env.example` documents every key. **Physical deviceIds are NEVER server
+config** — they live only in the reji browser's localStorage.
+
+**Episode → briefing** — `app/AI/Prompting/AssembleEpisodeBriefing::forEpisode(Episode, AiPersona, ?string $lineupInstructions): string`
+is the single provider-independent builder. `AssembleRehearsalPrompt` calls it
++ adds the rehearsal `SEÇİLİ KONU/SORU` emphasis + `GÖREV` directive;
+`MintStudioSession` calls it + appends the fixed `REALTIME_DIRECTIVE`
+("CANLI YAYIN GÖREVİ:" — no chatbot closings, stay in character, name the
+persona not "ChatGPT", the counterpart is "the presenter", don't ask for a
+re-brief, follow response-length, allow barge-in, don't invent facts).
+`app/AI/Realtime/ResolveStudioEpisode` (+ `StudioEpisodeContext`,
+`StudioEpisodeUnavailable`) is the domain validator the controller uses.
 
 ### Required production environment variables
 
 `AI_REALTIME_DRIVER=openai`, `OPENAI_API_KEY=<secret>` (already set for text).
+Keep `STUDIO_LIVE_ALLOW_STANDALONE` **false** (default) — a normal studio
+session must select a Ready episode.
 Optional tuning: `OPENAI_REALTIME_MODEL` (`gpt-realtime`), `OPENAI_REALTIME_VOICE`
 (`cedar` — **male** default; director can switch per session in Studio Control),
 `STUDIO_LIVE_MAX_SECONDS` (1200; 1800–2400 for 30–40 min rehearsals —
@@ -212,9 +270,30 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 - `tests/Feature/AI/MintStudioSessionTest.php` — default length 1200; honours a
   configured length incl. 2400; clamps to [30, 3600]; unusable value → 1200;
   forwards brief + `webrtc_url`; passes getUserMedia constraints through from
-  config (default all-on; `autoGainControl:false` reflected); **no requested
+  config (default all-on; `autoGainControl:false` reflected); no requested
   voice → provider default; an allow-listed voice → override; an unknown voice
-  → ignored.**
+  → ignored.
+- `tests/Feature/AI/AssembleEpisodeBriefingTest.php` — **all** §5 Show/Episode/
+  persona/slot fields present with labels; **presenter-only fields (opening/
+  key_points/questions_to_push/closing_notes, topic/question presenter_notes)
+  never appear**; ALL topics + ALL questions in `sort_order`; blank fields
+  skipped; response-length keyword/prose/stray-token handling; real demo
+  Episode briefing size reported (**10 650 chars / ~2 170 words**, no
+  truncation).
+- `tests/Feature/AI/ResolveStudioEpisodeTest.php` — missing / unknown / non-Ready
+  episode rejected with the right `reason`; single-persona line-up auto-selects;
+  multi-persona needs an explicit persona; chosen persona used; persona outside
+  the line-up rejected; context eager-loaded (`show`, `topics`).
+- `tests/Feature/Studio/StudioLiveEpisodeSessionTest.php` — no episode → `422
+  episode_required`; unknown → `episode_not_found`; non-Ready → `episode_not_ready`;
+  persona outside line-up → `persona_not_in_lineup`; multi-persona no persona →
+  `persona_required`; **single-persona happy path: the mint instructions contain
+  "Gerçeğin Peşinde", "Hikmet", the persona title, the episode title + main
+  topic + ai_objective + must_cover + avoid, the line-up instruction, the
+  persona system_prompt, EVERY topic title, EVERY question, and "CANLI YAYIN
+  GÖREVİ:" — and NO presenter-only markers**; multi-persona uses the chosen
+  persona; openai driver forwards the briefing as `session.instructions` with
+  the standing key intact; standalone still works when explicitly allowed.
 - `tests/Feature/Studio/StudioLivePageTest.php` — guest → `/admin/login`;
   non-admin → 403; admin → **only the orb**: no `<button>`, no `#controls` /
   `#connect` / `#hangup` / `#timer` / `#status`, no "Yayın görünümü"; carries
@@ -232,9 +311,11 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 - `tests/Feature/Filament/StudioControlPageTest.php` — guest → `/admin/login`;
   non-admin → 403; admin → console with all four transport/mute buttons, the
   input/output device selectors + **AI Sesi** picker (Cedar/Marin options),
-  "Cihazları Yenile", Kalan süre / Mikrofon readouts,
+  the **Yayın Hazırlığı / Yayın Bölümü** episode selector (`episodeUuid` /
+  `personaUuid` in the JS), "Cihazları Yenile", Kalan süre / Mikrofon readouts,
   `BroadcastChannel('studio-live')` + `enumerateDevices` + `localStorage`, the
-  unsupported-output message; no key / `client_secret` / `sk-`.
+  unsupported-output message; no key / `client_secret` / `sk-`. Separately:
+  **only Ready episodes are listed** (Draft/Preparing are not).
 
 ### Acceptance checklist
 
@@ -263,13 +344,21 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 - [x] No existing feature or test broken (additive only)
 - [x] AI voice is **male by default** (`cedar`) and switchable per session from
       Studio Control against a server-validated config allow-list
-- [x] Pint · `php artisan test` (247) · PHPStan level 6 (0, no baseline)
-- [ ] **Manual (real Chrome + ≥2 audio interfaces) — NOT performed here** (JS
-      syntax-checked only). See the checklist in the delivery report.
+- [x] A live session binds a **Ready Episode + one line-up persona**; the AI
+      starts already knowing the show / persona identity / episode topic /
+      brief / all discussion topics + questions (single shared
+      `AssembleEpisodeBriefing`, reused by rehearsal + realtime); presenter-only
+      fields excluded; validated server-side (`ResolveStudioEpisode`), no silent
+      fallback; **no DB / model / migration**
+- [x] Pint · `php artisan test` (270) · PHPStan level 6 (0, no baseline) · both
+      inline scripts `node --check` clean
+- [ ] **Manual (real Chrome + ≥2 audio interfaces + real OpenAI key) — NOT
+      performed here.** See the delivery-report acceptance checklist (demo
+      Episode: Gerçeğin Peşinde / Hikmet / Cahiliye Döneminden İslam'a).
 
 ### Next task (draft, not started)
 
 **TASK-0008** — not started. Do not begin without a written task here.
-Likely follow-ups: bind `/studio/live` to a specific Episode (persona identity
-+ AI brief + topics via the TASK-0006 prompt assembly), a persisted
-transcript/event log, per-session spend caps.
+Likely follow-ups: a persisted transcript / event log for a live session;
+per-session spend caps; the human-host model/field (deferred product decision);
+a persona `voice_id` → realtime-voice resolver.

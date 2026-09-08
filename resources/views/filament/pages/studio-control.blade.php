@@ -55,6 +55,10 @@
         .sc-alert__line { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
 
         .sc-notes { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; font-size: .8125rem; opacity: .7; }
+
+        .sc-summary { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1.25rem; font-size: .8125rem; align-items: baseline; margin: 1rem 0 0; }
+        .sc-summary dt { margin: 0; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: .6875rem; opacity: .55; }
+        .sc-summary dd { margin: 0; }
     </style>
 
     <div x-data="studioControl" x-cloak class="sc-root">
@@ -81,6 +85,63 @@
                 </x-filament::badge>
             </div>
         </div>
+
+        {{-- Yayın Hazırlığı: which prepared, Ready episode + persona goes on air --}}
+        <x-filament::section
+            icon="heroicon-o-film"
+            heading="Yayın Hazırlığı"
+            description="Yalnızca 'Yayına Hazır' bölümler listelenir. Bölüm seçilmeden bağlanılamaz."
+        >
+            <div class="sc-fields">
+                <div class="sc-field">
+                    <label class="sc-label" for="sc-episode">Yayın Bölümü</label>
+                    <x-filament::input.wrapper>
+                        <x-filament::input.select
+                            id="sc-episode"
+                            x-model="episodeUuid"
+                            x-on:change="onEpisodeChange()"
+                            x-bind:disabled="connected"
+                        >
+                            <option value="">— bölüm seçin —</option>
+                            <template x-for="e in episodes" :key="e.uuid">
+                                <option :value="e.uuid" x-text="e.label"></option>
+                            </template>
+                        </x-filament::input.select>
+                    </x-filament::input.wrapper>
+                    <p class="sc-help" x-show="!episodeUuid" x-cloak>Canlı yayına çıkacak bölümü seçin.</p>
+                    <p class="sc-help sc-help--warn" x-show="episodeUuid && !selectedEpisode" x-cloak>
+                        Kayıtlı bölüm artık "Yayına Hazır" listesinde yok — yeniden seçin.
+                    </p>
+                </div>
+
+                <div class="sc-field" x-show="needsPersonaChoice" x-cloak>
+                    <label class="sc-label" for="sc-persona">Canlı AI Karakteri</label>
+                    <x-filament::input.wrapper>
+                        <x-filament::input.select
+                            id="sc-persona"
+                            x-model="personaUuid"
+                            x-on:change="onPersonaChange()"
+                            x-bind:disabled="connected"
+                        >
+                            <template x-for="p in episodePersonas" :key="p.uuid">
+                                <option :value="p.uuid" x-text="p.title ? (p.name + ' — ' + p.title) : p.name"></option>
+                            </template>
+                        </x-filament::input.select>
+                    </x-filament::input.wrapper>
+                    <p class="sc-help">Bu bölümün kadrosunda birden fazla AI karakteri var; yayına çıkacak olanı seçin.</p>
+                </div>
+            </div>
+
+            <template x-if="selectedEpisode">
+                <dl class="sc-summary">
+                    <dt>Program</dt><dd x-text="selectedEpisode.program"></dd>
+                    <dt>Bölüm</dt><dd x-text="selectedEpisode.title"></dd>
+                    <dt>Ana Konu</dt><dd x-text="selectedEpisode.main_topic"></dd>
+                    <dt>AI Karakteri</dt><dd x-text="activePersonaLabel"></dd>
+                    <dt>Yayın Durumu</dt><dd x-text="selectedEpisode.status_label"></dd>
+                </dl>
+            </template>
+        </x-filament::section>
 
         {{-- Broadcast screen (Studio Live) status --}}
         <div class="sc-alert" :class="broadcastAlive ? 'sc-alert--ok' : 'sc-alert--warn'">
@@ -245,7 +306,7 @@
                         icon="heroicon-o-play"
                         x-show="!connected"
                         x-on:click="send('connect')"
-                        x-bind:disabled="!broadcastAlive || !inputId || inputMissing"
+                        x-bind:disabled="!broadcastAlive || !inputId || inputMissing || !selectedEpisode || !personaUuid"
                     >
                         BAĞLAN
                     </x-filament::button>
@@ -299,13 +360,17 @@
                 var IN_KEY = 'studio.control.inputDeviceId';
                 var OUT_KEY = 'studio.control.outputDeviceId';
                 var VOICE_KEY = 'studio.control.voiceId';
+                var EP_KEY = 'studio.control.episodeUuid';
+                var PER_KEY = 'studio.control.personaUuid';
                 var DEFAULT_VOICE = @js($defaultVoice);
+                var EPISODES = @js($episodes);
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
 
                 return {
                     connected: false, muted: false, status: 'Hazır', remaining: null, broadcastAlive: false,
                     inputs: [], outputs: [], inputId: '', outputId: '', voiceId: DEFAULT_VOICE,
+                    episodes: EPISODES, episodeUuid: '', personaUuid: '',
                     inputMissing: false, outputMissing: false, permissionNeeded: false,
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
                     _bc: null, _last: 0, _iv: null,
@@ -315,11 +380,42 @@
                         var m = Math.floor(this.remaining / 60), s = this.remaining % 60;
                         return m + ':' + (s < 10 ? '0' : '') + s;
                     },
+                    get selectedEpisode() {
+                        var uuid = this.episodeUuid;
+                        return this.episodes.find(function (e) { return e.uuid === uuid; }) || null;
+                    },
+                    get episodePersonas() {
+                        return this.selectedEpisode ? this.selectedEpisode.personas : [];
+                    },
+                    get needsPersonaChoice() {
+                        return !this.connected && this.episodePersonas.length > 1;
+                    },
+                    get activePersonaLabel() {
+                        var uuid = this.personaUuid;
+                        var p = this.episodePersonas.find(function (x) { return x.uuid === uuid; });
+                        if (!p) return '—';
+                        return p.title ? (p.name + ' — ' + p.title) : p.name;
+                    },
+                    // Keep personaUuid valid for the current episode: force the
+                    // single persona, keep a still-valid choice, else default to
+                    // the first (sort_order) persona.
+                    _syncPersona: function () {
+                        var list = this.episodePersonas;
+                        if (list.length === 0) { this.personaUuid = ''; return; }
+                        if (list.length === 1) { this.personaUuid = list[0].uuid; return; }
+                        var current = this.personaUuid;
+                        if (!list.some(function (p) { return p.uuid === current; })) {
+                            this.personaUuid = list[0].uuid;
+                        }
+                    },
 
                     init: function () {
                         this.inputId = lsGet(IN_KEY);
                         this.outputId = lsGet(OUT_KEY);
                         this.voiceId = lsGet(VOICE_KEY) || DEFAULT_VOICE;
+                        this.episodeUuid = lsGet(EP_KEY);
+                        this.personaUuid = lsGet(PER_KEY);
+                        this._syncPersona();
 
                         try { this._bc = new BroadcastChannel('studio-live'); } catch (e) { this._bc = null; }
                         if (this._bc) {
@@ -429,13 +525,26 @@
                         lsSet(VOICE_KEY, this.voiceId);
                         this.sendDevices();
                     },
+                    onEpisodeChange: function () {
+                        lsSet(EP_KEY, this.episodeUuid);
+                        this.personaUuid = '';
+                        this._syncPersona();
+                        lsSet(PER_KEY, this.personaUuid);
+                        this.sendDevices();
+                    },
+                    onPersonaChange: function () {
+                        lsSet(PER_KEY, this.personaUuid);
+                        this.sendDevices();
+                    },
 
                     sendDevices: function () {
                         if (this._bc) this._bc.postMessage({
                             type: 'devices',
                             inputId: this.inputId || null,
                             outputId: this.outputId || null,
-                            voiceId: this.voiceId || null
+                            voiceId: this.voiceId || null,
+                            episodeUuid: this.episodeUuid || null,
+                            personaUuid: this.personaUuid || null
                         });
                     },
                     send: function (cmd) {

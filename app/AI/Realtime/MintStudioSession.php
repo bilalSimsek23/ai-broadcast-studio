@@ -6,16 +6,25 @@ namespace App\AI\Realtime;
 
 use App\AI\Contracts\RealtimeVoiceProvider;
 use App\AI\Dtos\RealtimeSessionRequest;
+use App\AI\Prompting\AssembleEpisodeBriefing;
 use Illuminate\Contracts\Config\Repository;
 
 /**
  * The one thin application service behind the /studio/live "Bağlan" action:
- * read the standing studio brief + limits from config, ask the configured
+ * build the AI's standing instructions, ask the configured
  * {@see RealtimeVoiceProvider} for an ephemeral session, and return a
  * {@see StudioSession} for the controller to hand to the browser.
  *
- * It never touches the API key and knows nothing about HTTP — the provider
- * owns the vendor call, this owns the studio policy (brief, time cap).
+ * Normal production flow: a validated {@see StudioEpisodeContext} is supplied,
+ * and the instructions are the FULL prepared-episode briefing
+ * ({@see AssembleEpisodeBriefing} — the same builder the rehearsal tool uses)
+ * plus a fixed live-broadcast behaviour directive.
+ *
+ * `config('ai.realtime.instructions')` is only used when NO episode context is
+ * given — a development / explicit standalone-diagnostic fallback, gated by
+ * `config('ai.realtime.allow_standalone_session')` at the controller.
+ *
+ * It never touches the API key and knows nothing about HTTP.
  */
 final readonly class MintStudioSession
 {
@@ -31,8 +40,29 @@ final readonly class MintStudioSession
     /** 60 min — headroom for 30–40 min broadcast rehearsals set via config. */
     private const MAX_SECONDS = 3600;
 
+    /**
+     * Fixed live-broadcast behaviour, appended after the episode briefing. This
+     * is BEHAVIOUR, not tuning — it is not env-configurable.
+     */
+    private const REALTIME_DIRECTIVE = <<<'TR'
+        CANLI YAYIN GÖREVİ:
+
+        Sen yukarıda tanımlanan AI karaktersin. Kendini ChatGPT veya genel bir yapay zekâ asistanı olarak tanıtma; kendi karakter adını kullan.
+
+        Şu anda yukarıda belirtilen televizyon programının canlı sesli müzakere bölümündesin. Karşındaki kişi programın insan sunucusudur. Sunucunun adı sistemde tanımlı değil; isim uydurma, gerekirse "sunucu" de veya doğal hitap kullan.
+
+        Programın adını, kendi adını ve bugünkü konuyu zaten biliyorsun. Sunucudan bunları sana yeniden açıklamasını isteme; konuya yabancıymış gibi davranma.
+
+        Türkçe, doğal ve televizyon konuşmasına uygun cevap ver. Sorulan soruya önce doğrudan cevap ver, sonra gerekiyorsa kısa bağlam ekle. Gereksiz uzun monologlardan kaçın. Yukarıdaki "YANIT UZUNLUĞU" varsa ona uy. Sunucu kısa takip sorusu sorarsa daha kısa cevap ver. Sunucu sözünü keserse hemen konuşmayı bırak ve onu dinle.
+
+        "Başka bir sorunuz var mı?", "Size nasıl yardımcı olabilirim?" gibi chatbot kapanışları kullanma. Her cevapta program adını veya "canlı yayındayız" bilgisini tekrar etme. Konuşmayı gerçek bir televizyon sohbeti gibi sürdür.
+
+        Hazırlık notlarında olmayan kesin tarihsel veya olgusal bilgileri uydurma. Tartışmalı konularda görüş ayrılıklarını doğal biçimde belirt. Sunucunun söylediği her şeyi otomatik doğru kabul etme; gerekirse saygılı biçimde düzelt veya nüans ekle. Amacın tartışmayı kazanmak değil, meseleyi açıklığa kavuşturmak.
+        TR;
+
     public function __construct(
         private RealtimeVoiceProvider $provider,
+        private AssembleEpisodeBriefing $briefing,
         private Repository $config,
     ) {}
 
@@ -41,13 +71,14 @@ final readonly class MintStudioSession
      *                                       Studio Control — honoured only if it is one of the keys in
      *                                       config('ai.realtime.voices'); otherwise the provider's configured
      *                                       (male) default is used.
+     * @param  StudioEpisodeContext|null  $context  the validated Ready episode +
+     *                                              speaking persona; null only for a standalone diagnostic session.
      */
-    public function __invoke(?string $requestedVoice = null): StudioSession
+    public function __invoke(?string $requestedVoice = null, ?StudioEpisodeContext $context = null): StudioSession
     {
-        $instructions = $this->config->get('ai.realtime.instructions');
-        $instructions = is_string($instructions) && trim($instructions) !== ''
-            ? $instructions
-            : self::FALLBACK_INSTRUCTIONS;
+        $instructions = $context !== null
+            ? $this->episodeInstructions($context)
+            : $this->standaloneInstructions();
 
         $token = $this->provider->createClientSession(
             new RealtimeSessionRequest($instructions, $this->resolveVoice($requestedVoice)),
@@ -63,6 +94,26 @@ final readonly class MintStudioSession
             : self::FALLBACK_WEBRTC_URL;
 
         return new StudioSession($token, $maxSeconds, $webrtcUrl, $this->audioConstraints());
+    }
+
+    private function episodeInstructions(StudioEpisodeContext $context): string
+    {
+        $briefing = $this->briefing->forEpisode(
+            $context->episode,
+            $context->persona,
+            $context->slot->episode_instructions,
+        );
+
+        return $briefing."\n\n".self::REALTIME_DIRECTIVE;
+    }
+
+    private function standaloneInstructions(): string
+    {
+        $configured = $this->config->get('ai.realtime.instructions');
+
+        return is_string($configured) && trim($configured) !== ''
+            ? $configured
+            : self::FALLBACK_INSTRUCTIONS;
     }
 
     /**

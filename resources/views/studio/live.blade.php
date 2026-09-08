@@ -38,6 +38,7 @@
             var timerId = null, beatId = null, speaking = 0;
             var muted = false, remainingSeconds = null, status = 'Hazır';
             var inputDeviceId = null, outputDeviceId = null, selectedVoice = null;
+            var selectedEpisode = null, selectedPersona = null;
             var activeInputId = null;
             var outputSupported = ('setSinkId' in HTMLMediaElement.prototype);
             var deviceError = false, deviceLost = false;
@@ -66,6 +67,8 @@
                         inputDeviceId = d.inputId || null;
                         outputDeviceId = d.outputId || null;
                         selectedVoice = d.voiceId || null;
+                        selectedEpisode = d.episodeUuid || null;
+                        selectedPersona = d.personaUuid || null;
                         applyOutputDevice();
                         return;
                     }
@@ -135,12 +138,22 @@
                             'Accept': 'application/json',
                             'Content-Type': 'application/json'
                         },
-                        // The chosen voice is validated server-side against the
-                        // config allow-list; an unknown value falls back to the
-                        // default (male) voice.
-                        body: JSON.stringify({ voice: selectedVoice || null })
+                        // episode + persona are validated server-side
+                        // (App\AI\Realtime\ResolveStudioEpisode); voice against
+                        // the config allow-list. No silent fallback for a wrong
+                        // episode — a 422 with a Turkish message comes back.
+                        body: JSON.stringify({
+                            voice: selectedVoice || null,
+                            episode: selectedEpisode || null,
+                            persona: selectedPersona || null
+                        })
                     });
-                    if (!r.ok) throw 0;
+                    if (!r.ok) {
+                        var err = null;
+                        try { err = await r.json(); } catch (e2) {}
+                        setStatus((err && err.message) ? err.message : 'Oturum başlatılamadı');
+                        return;
+                    }
                     s = await r.json();
                 } catch (e) { setStatus('Oturum başlatılamadı'); return; }
 

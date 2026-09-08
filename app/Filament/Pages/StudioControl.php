@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Enums\EpisodeStatus;
+use App\Models\Episode;
+use App\Models\EpisodeAiPersona;
 use App\Models\User;
 use BackedEnum;
 use Filament\Pages\Page;
@@ -61,6 +64,51 @@ class StudioControl extends Page
         return [
             'voices' => is_array($voices) ? $voices : [],
             'defaultVoice' => is_string($default) && $default !== '' ? $default : 'cedar',
+            'episodes' => $this->readyEpisodes(),
         ];
+    }
+
+    /**
+     * The Ready episodes the director may put on air, each with its full
+     * line-up (so the persona selector can populate client-side). No raw
+     * credential ever appears here.
+     *
+     * @return list<array{
+     *     uuid: string, label: string, program: string, title: string,
+     *     main_topic: string, status_label: string,
+     *     personas: list<array{uuid: string, name: string, title: string}>
+     * }>
+     */
+    private function readyEpisodes(): array
+    {
+        return Episode::query()
+            ->where('status', EpisodeStatus::Ready->value)
+            ->with(['show', 'lineup.aiPersona'])
+            ->orderByDesc('broadcast_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (Episode $episode): array {
+                // A Ready episode always has a show (readiness check requires it).
+                $program = $episode->show->name;
+                $number = $episode->episode_number;
+
+                return [
+                    'uuid' => $episode->uuid,
+                    'label' => trim($program.' — Bölüm '.($number ?? '?').' — '.$episode->title),
+                    'program' => $program,
+                    'title' => $episode->title,
+                    'main_topic' => (string) ($episode->main_topic ?? '—'),
+                    'status_label' => 'Yayına Hazır',
+                    'personas' => $episode->lineup
+                        ->map(static fn (EpisodeAiPersona $slot): array => [
+                            'uuid' => $slot->aiPersona->uuid,
+                            'name' => $slot->aiPersona->name,
+                            'title' => (string) ($slot->aiPersona->title ?? ''),
+                        ])
+                        ->values()
+                        ->all(),
+                ];
+            })
+            ->all();
     }
 }

@@ -65,11 +65,45 @@ class StudioControl extends Page
             'voices' => is_array($voices) ? $voices : [],
             'defaultVoice' => is_string($default) && $default !== '' ? $default : 'marin',
             'episodes' => $this->readyEpisodes(),
+            'durations' => $this->sessionDurations(),
+            'defaultDuration' => $this->defaultDuration(),
             'imageEndpoint' => route('studio.image', [], absolute: false),
             'imageSizes' => $this->imageSizes(),
             'defaultImageSize' => $this->defaultImageSize(),
             'imageDriverReady' => config('ai.image.driver') === 'openai',
         ];
+    }
+
+    /**
+     * Session lengths the director may pick (seconds => label; `0` = no limit),
+     * from config('ai.realtime.session_durations').
+     *
+     * @return array<int, string>
+     */
+    private function sessionDurations(): array
+    {
+        $durations = config('ai.realtime.session_durations');
+
+        if (! is_array($durations)) {
+            return [];
+        }
+
+        $out = [];
+
+        foreach ($durations as $seconds => $label) {
+            if (is_int($seconds) && is_string($label)) {
+                $out[$seconds] = $label;
+            }
+        }
+
+        return $out;
+    }
+
+    private function defaultDuration(): int
+    {
+        $default = config('ai.realtime.session_max_seconds');
+
+        return is_int($default) ? $default : 1200;
     }
 
     /**

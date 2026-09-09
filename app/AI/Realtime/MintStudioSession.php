@@ -82,9 +82,16 @@ final readonly class MintStudioSession
      *                                       (male) default is used.
      * @param  StudioEpisodeContext|null  $context  the validated Ready episode +
      *                                              speaking persona; null only for a standalone diagnostic session.
+     * @param  int|null  $requestedMaxSeconds  the session length the director
+     *                                         picked in Studio Control — honoured only if it is one of the keys
+     *                                         in config('ai.realtime.session_durations') (`0` = no limit);
+     *                                         otherwise config('ai.realtime.session_max_seconds') is used.
      */
-    public function __invoke(?string $requestedVoice = null, ?StudioEpisodeContext $context = null): StudioSession
-    {
+    public function __invoke(
+        ?string $requestedVoice = null,
+        ?StudioEpisodeContext $context = null,
+        ?int $requestedMaxSeconds = null,
+    ): StudioSession {
         $instructions = $context !== null
             ? $this->episodeInstructions($context)
             : $this->standaloneInstructions();
@@ -93,9 +100,7 @@ final readonly class MintStudioSession
             new RealtimeSessionRequest($instructions, $this->resolveVoice($requestedVoice)),
         );
 
-        $maxSeconds = $this->config->get('ai.realtime.session_max_seconds');
-        $maxSeconds = is_int($maxSeconds) ? $maxSeconds : self::DEFAULT_SECONDS;
-        $maxSeconds = max(self::MIN_SECONDS, min($maxSeconds, self::MAX_SECONDS));
+        $maxSeconds = $this->resolveMaxSeconds($requestedMaxSeconds);
 
         $webrtcUrl = $this->config->get('ai.realtime.webrtc_url');
         $webrtcUrl = is_string($webrtcUrl) && trim($webrtcUrl) !== ''
@@ -114,6 +119,47 @@ final readonly class MintStudioSession
         );
 
         return $briefing."\n\n".self::REALTIME_DIRECTIVE;
+    }
+
+    /**
+     * The session length the browser enforces (`0` = no limit). An operator
+     * value from Studio Control is honoured only when it is one of the keys in
+     * config('ai.realtime.session_durations') — those are dev-defined and
+     * trusted as-is. Otherwise the configured default is used, sanity-clamped
+     * to [MIN_SECONDS, MAX_SECONDS] unless it is `0` (no limit).
+     */
+    private function resolveMaxSeconds(?int $requested): int
+    {
+        if ($requested !== null && in_array($requested, $this->allowedDurations(), true)) {
+            return max(0, $requested);
+        }
+
+        $default = $this->config->get('ai.realtime.session_max_seconds');
+        $default = is_int($default) ? $default : self::DEFAULT_SECONDS;
+
+        return $default <= 0 ? 0 : max(self::MIN_SECONDS, min($default, self::MAX_SECONDS));
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function allowedDurations(): array
+    {
+        $durations = $this->config->get('ai.realtime.session_durations');
+
+        if (! is_array($durations)) {
+            return [];
+        }
+
+        $out = [];
+
+        foreach (array_keys($durations) as $key) {
+            if (is_int($key)) {
+                $out[] = $key;
+            }
+        }
+
+        return $out;
     }
 
     private function standaloneInstructions(): string

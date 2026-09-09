@@ -47,7 +47,7 @@
             var timerId = null, beatId = null, speaking = 0;
             var muted = false, remainingSeconds = null, status = 'Hazır';
             var inputDeviceId = null, outputDeviceId = null, selectedVoice = null;
-            var selectedEpisode = null, selectedPersona = null;
+            var selectedEpisode = null, selectedPersona = null, selectedMaxSeconds = null;
             var activeInputId = null;
             var outputSupported = ('setSinkId' in HTMLMediaElement.prototype);
             var deviceError = false, deviceLost = false;
@@ -78,6 +78,7 @@
                         selectedVoice = d.voiceId || null;
                         selectedEpisode = d.episodeUuid || null;
                         selectedPersona = d.personaUuid || null;
+                        selectedMaxSeconds = (typeof d.durationSeconds === 'number') ? d.durationSeconds : null;
                         applyOutputDevice();
                         return;
                     }
@@ -162,7 +163,8 @@
                         body: JSON.stringify({
                             voice: selectedVoice || null,
                             episode: selectedEpisode || null,
-                            persona: selectedPersona || null
+                            persona: selectedPersona || null,
+                            max_seconds: (selectedMaxSeconds === null ? null : selectedMaxSeconds)
                         })
                     });
                     if (!r.ok) {
@@ -224,7 +226,14 @@
 
                 await pc.setRemoteDescription({ type: 'answer', sdp: answer });
                 publish();
-                startTimer(s.session_max_seconds);
+                // 0 / null from the backend = no session limit; otherwise the
+                // browser enforces it and auto-hangs up at zero.
+                if (Number(s.session_max_seconds) > 0) {
+                    startTimer(s.session_max_seconds);
+                } else {
+                    remainingSeconds = null;
+                    setStatus('Yayında');
+                }
             }
 
             function listen(stream) {

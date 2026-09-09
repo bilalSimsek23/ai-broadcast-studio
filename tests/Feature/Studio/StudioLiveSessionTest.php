@@ -120,6 +120,26 @@ class StudioLiveSessionTest extends TestCase
         $this->postJson('/studio/live/session')->assertOk()->assertJsonPath('session_max_seconds', 480);
     }
 
+    public function test_the_director_can_set_the_session_length_per_request(): void
+    {
+        $this->actingAsAdmin();
+
+        // Allow-listed choice (config('ai.realtime.session_durations')).
+        $this->postJson('/studio/live/session', ['max_seconds' => 2400])
+            ->assertOk()
+            ->assertJsonPath('session_max_seconds', 2400);
+
+        // 0 = no auto-close.
+        $this->postJson('/studio/live/session', ['max_seconds' => 0])
+            ->assertOk()
+            ->assertJsonPath('session_max_seconds', 0);
+
+        // A value that is not on the allow-list is ignored (config default).
+        $this->postJson('/studio/live/session', ['max_seconds' => 137])
+            ->assertOk()
+            ->assertJsonPath('session_max_seconds', 1200);
+    }
+
     public function test_the_openai_driver_mints_via_the_api_and_the_standing_key_stays_server_side(): void
     {
         Http::fake([

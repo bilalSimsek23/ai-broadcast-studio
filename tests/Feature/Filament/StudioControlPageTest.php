@@ -46,6 +46,12 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('personaUuid', escape: false);
         $response->assertSee('studio.control.episodeUuid', escape: false);
 
+        // Session length is operator-settable (incl. no limit).
+        $response->assertSee('Oturum Süresi');
+        $response->assertSee('Sınırsız');
+        $response->assertSee('durationSeconds', escape: false);
+        $response->assertSee('studio.control.durationSeconds', escape: false);
+
         // Transport + mute controls
         $response->assertSee('BAĞLAN');
         $response->assertSee('GÖRÜŞMEYİ BİTİR');

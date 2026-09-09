@@ -52,8 +52,10 @@ class StudioLivePageTest extends TestCase
         $response->assertSee('id="still"', escape: false);
         $response->assertSee("d.type === 'image'", escape: false);
 
-        // Session length still comes from the backend, not a literal.
+        // Session length still comes from the backend, not a literal; 0 = no limit.
         $response->assertSee('startTimer(s.session_max_seconds)', escape: false);
+        $response->assertSee('max_seconds', escape: false);
+        $response->assertSee('Number(s.session_max_seconds) > 0', escape: false);
         $response->assertDontSee('|| 600', escape: false);
 
         // Device application happens here (WebRTC owner), driven by the control page.

@@ -36,6 +36,7 @@ final class StudioLiveController extends Controller
         $voice = $this->stringOrNull($request->input('voice'));
         $episodeUuid = $this->stringOrNull($request->input('episode'));
         $personaUuid = $this->stringOrNull($request->input('persona'));
+        $maxSeconds = $this->intOrNull($request->input('max_seconds'));
 
         // Normal production flow: an episode is bound. A standalone (no-episode)
         // session is a development / diagnostic escape hatch only, off by
@@ -56,7 +57,7 @@ final class StudioLiveController extends Controller
         }
 
         try {
-            $session = $mint($voice, $context);
+            $session = $mint($voice, $context, $maxSeconds);
         } catch (ProviderException $e) {
             report($e);
 
@@ -72,6 +73,15 @@ final class StudioLiveController extends Controller
     private function stringOrNull(mixed $value): ?string
     {
         return is_string($value) && trim($value) !== '' ? trim($value) : null;
+    }
+
+    /**
+     * `0` is a real value here (no session limit) — only a missing / non-numeric
+     * value becomes null.
+     */
+    private function intOrNull(mixed $value): ?int
+    {
+        return is_numeric($value) ? (int) $value : null;
     }
 
     private function refused(string $error, string $message): JsonResponse

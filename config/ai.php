@@ -122,11 +122,24 @@ return [
     'realtime' => [
         'driver' => env('AI_REALTIME_DRIVER', 'fake'),
 
-        // Hard cap (seconds) the browser enforces before it auto-disconnects a
-        // session — the single source of truth for the session length. Default
-        // 20 minutes; raise it (e.g. 1800–2400) from the environment for longer
-        // broadcast rehearsals. The service clamps to [30, 3600].
+        // Default session length (seconds) the browser enforces before it
+        // auto-disconnects. 20 minutes by default; raise it from the
+        // environment for longer broadcasts. `0` = NO limit. The default path
+        // clamps a non-zero value to [30, 3600]; an operator pick from
+        // `session_durations` below is trusted as-is.
         'session_max_seconds' => (int) env('STUDIO_LIVE_MAX_SECONDS', 1200),
+
+        // The lengths the director may pick from on the Studio Control page
+        // (key = seconds, `0` = no limit). The request is validated against
+        // these KEYS server-side; an unlisted value falls back to
+        // `session_max_seconds`.
+        'session_durations' => [
+            1200 => '20 dakika',
+            2400 => '40 dakika',
+            3600 => '60 dakika',
+            7200 => '2 saat',
+            0 => 'Sınırsız',
+        ],
 
         // Where the browser POSTs its WebRTC SDP offer (Bearer = ephemeral
         // secret). A vendor URL, declared here — never hardcoded in JS/PHP.

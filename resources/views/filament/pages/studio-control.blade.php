@@ -137,6 +137,23 @@
                     </x-filament::input.wrapper>
                     <p class="sc-help">Bu bölümün kadrosunda birden fazla AI karakteri var; yayına çıkacak olanı seçin.</p>
                 </div>
+
+                <div class="sc-field">
+                    <label class="sc-label" for="sc-duration">Oturum Süresi</label>
+                    <x-filament::input.wrapper>
+                        <x-filament::input.select
+                            id="sc-duration"
+                            x-model.number="durationSeconds"
+                            x-on:change="onDurationChange()"
+                            x-bind:disabled="connected"
+                        >
+                            @foreach ($durations as $seconds => $label)
+                                <option value="{{ $seconds }}">{{ $label }}</option>
+                            @endforeach
+                        </x-filament::input.select>
+                    </x-filament::input.wrapper>
+                    <p class="sc-help">Yayın bu sürenin sonunda otomatik kapanır. "Sınırsız" seçilirse kapanmaz.</p>
+                </div>
             </div>
 
             <template x-if="selectedEpisode">
@@ -145,6 +162,7 @@
                     <dt>Bölüm</dt><dd x-text="selectedEpisode.title"></dd>
                     <dt>Ana Konu</dt><dd x-text="selectedEpisode.main_topic"></dd>
                     <dt>AI Karakteri</dt><dd x-text="activePersonaLabel"></dd>
+                    <dt>Süre</dt><dd x-text="durationLabel"></dd>
                     <dt>Yayın Durumu</dt><dd x-text="selectedEpisode.status_label"></dd>
                 </dl>
             </template>
@@ -464,8 +482,12 @@
                 var VOICE_KEY = 'studio.control.voiceId';
                 var EP_KEY = 'studio.control.episodeUuid';
                 var PER_KEY = 'studio.control.personaUuid';
+                var DUR_KEY = 'studio.control.durationSeconds';
                 var DEFAULT_VOICE = @js($defaultVoice);
                 var EPISODES = @js($episodes);
+                var DURATION_LABELS = @js($durations);
+                var DURATION_KEYS = Object.keys(DURATION_LABELS).map(Number);
+                var DEFAULT_DURATION = @js($defaultDuration);
                 var IMAGE_ENDPOINT = @js($imageEndpoint);
                 var DEFAULT_IMAGE_SIZE = @js($defaultImageSize);
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
@@ -475,6 +497,7 @@
                     connected: false, muted: false, status: 'Hazır', remaining: null, broadcastAlive: false,
                     inputs: [], outputs: [], inputId: '', outputId: '', voiceId: DEFAULT_VOICE,
                     episodes: EPISODES, episodeUuid: '', personaUuid: '',
+                    durationSeconds: DEFAULT_DURATION,
                     inputMissing: false, outputMissing: false, permissionNeeded: false,
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
                     imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, stagedImage: '',
@@ -482,9 +505,14 @@
                     _bc: null, _last: 0, _iv: null,
 
                     get remainingLabel() {
-                        if (this.remaining === null || this.remaining === undefined) return '—';
+                        if (this.remaining === null || this.remaining === undefined) {
+                            return this.connected ? '∞' : '—';
+                        }
                         var m = Math.floor(this.remaining / 60), s = this.remaining % 60;
                         return m + ':' + (s < 10 ? '0' : '') + s;
+                    },
+                    get durationLabel() {
+                        return DURATION_LABELS[this.durationSeconds] || (Math.round(this.durationSeconds / 60) + ' dk');
                     },
                     get selectedEpisode() {
                         var uuid = this.episodeUuid;
@@ -522,6 +550,9 @@
                         this.episodeUuid = lsGet(EP_KEY);
                         this.personaUuid = lsGet(PER_KEY);
                         this._syncPersona();
+
+                        var savedDur = parseInt(lsGet(DUR_KEY), 10);
+                        this.durationSeconds = (DURATION_KEYS.indexOf(savedDur) !== -1) ? savedDur : DEFAULT_DURATION;
 
                         try { this._bc = new BroadcastChannel('studio-live'); } catch (e) { this._bc = null; }
                         if (this._bc) {
@@ -646,6 +677,10 @@
                         lsSet(PER_KEY, this.personaUuid);
                         this.sendDevices();
                     },
+                    onDurationChange: function () {
+                        lsSet(DUR_KEY, String(this.durationSeconds));
+                        this.sendDevices();
+                    },
 
                     // --- Broadcast image ---------------------------------------
                     fillPromptFromEpisode: function () {
@@ -712,7 +747,8 @@
                             outputId: this.outputId || null,
                             voiceId: this.voiceId || null,
                             episodeUuid: this.episodeUuid || null,
-                            personaUuid: this.personaUuid || null
+                            personaUuid: this.personaUuid || null,
+                            durationSeconds: this.durationSeconds
                         });
                     },
                     send: function (cmd) {

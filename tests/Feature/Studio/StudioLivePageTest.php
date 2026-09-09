@@ -47,6 +47,11 @@ class StudioLivePageTest extends TestCase
         // Controlled over a same-origin BroadcastChannel — no server relay.
         $response->assertSee("new BroadcastChannel('studio-live')", escape: false);
 
+        // A broadcast still-image layer exists, shown/hidden from the control
+        // page only (no controls on the output itself).
+        $response->assertSee('id="still"', escape: false);
+        $response->assertSee("d.type === 'image'", escape: false);
+
         // Session length still comes from the backend, not a literal.
         $response->assertSee('startTimer(s.session_max_seconds)', escape: false);
         $response->assertDontSee('|| 600', escape: false);

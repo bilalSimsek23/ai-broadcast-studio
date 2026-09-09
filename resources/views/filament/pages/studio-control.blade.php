@@ -59,6 +59,13 @@
         .sc-summary { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1.25rem; font-size: .8125rem; align-items: baseline; margin: 1rem 0 0; }
         .sc-summary dt { margin: 0; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: .6875rem; opacity: .55; }
         .sc-summary dd { margin: 0; }
+
+        .sc-textarea { width: 100%; min-height: 4.75rem; resize: vertical; border: 1px solid rgba(120, 130, 150, .3);
+            border-radius: .5rem; padding: .55rem .75rem; font: inherit; background: transparent; color: inherit; }
+        .dark .sc-textarea { border-color: rgba(255, 255, 255, .12); }
+        .sc-textarea:focus { outline: 2px solid rgba(120, 190, 255, .5); outline-offset: 1px; }
+        .sc-preview { margin-top: 1rem; width: 100%; max-height: 340px; object-fit: contain;
+            border-radius: .6rem; border: 1px solid rgba(120, 130, 150, .25); background: #000; }
     </style>
 
     <div x-data="studioControl" x-cloak class="sc-root">
@@ -140,6 +147,92 @@
                     <dt>AI Karakteri</dt><dd x-text="activePersonaLabel"></dd>
                     <dt>Yayın Durumu</dt><dd x-text="selectedEpisode.status_label"></dd>
                 </dl>
+            </template>
+        </x-filament::section>
+
+        {{-- Yayın Görseli: operator describes an image, generates it, previews
+             it, and pushes it to the broadcast screen on command. Nothing is
+             stored server-side; the image travels over the BroadcastChannel. --}}
+        <x-filament::section
+            icon="heroicon-o-photo"
+            heading="Yayın Görseli"
+            description="Bir görsel tarif edin, üretin, önizleyin ve komutla yayın ekranına gönderin. Görsel hiçbir yere kaydedilmez."
+        >
+            <x-slot name="afterHeader">
+                <x-filament::badge color="success" x-cloak x-show="imageOnAir">Yayında</x-filament::badge>
+            </x-slot>
+
+            <div class="sc-fields">
+                <div class="sc-field" style="grid-column: 1 / -1;">
+                    <label class="sc-label" for="sc-image-prompt">Görsel tarifi</label>
+                    <textarea
+                        id="sc-image-prompt"
+                        class="sc-textarea"
+                        rows="3"
+                        x-model="imagePrompt"
+                        x-bind:disabled="imageBusy"
+                        placeholder="Örn: Cahiliye dönemi Arap yarımadasında bir pazar yeri, gün batımı, gerçekçi illüstrasyon"
+                    ></textarea>
+                    <p class="sc-help">
+                        Yapay zekâ bu tarife göre görseli üretir.
+                        <button type="button" class="sc-linkbtn" x-cloak x-show="selectedEpisode" x-on:click="fillPromptFromEpisode()">
+                            Konudan doldur
+                        </button>
+                    </p>
+                </div>
+
+                <div class="sc-field">
+                    <label class="sc-label" for="sc-image-size">Boyut</label>
+                    <x-filament::input.wrapper>
+                        <x-filament::input.select id="sc-image-size" x-model="imageSize" x-bind:disabled="imageBusy">
+                            @foreach ($imageSizes as $value => $label)
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endforeach
+                        </x-filament::input.select>
+                    </x-filament::input.wrapper>
+                </div>
+            </div>
+
+            <div class="sc-actions">
+                <x-filament::button
+                    color="primary"
+                    icon="heroicon-o-sparkles"
+                    x-on:click="generateImage()"
+                    x-bind:disabled="imageBusy || imagePrompt.trim().length < 3"
+                >
+                    <span x-show="!imageBusy">Görsel Oluştur</span>
+                    <span x-cloak x-show="imageBusy">Üretiliyor…</span>
+                </x-filament::button>
+
+                <x-filament::button
+                    color="success"
+                    icon="heroicon-o-tv"
+                    x-cloak
+                    x-show="stagedImage && !imageOnAir"
+                    x-bind:disabled="!broadcastAlive"
+                    x-on:click="putImageOnAir()"
+                >
+                    Yayına Ver
+                </x-filament::button>
+
+                <x-filament::button
+                    color="danger"
+                    icon="heroicon-o-x-mark"
+                    x-cloak
+                    x-show="imageOnAir"
+                    x-on:click="clearImageFromAir()"
+                >
+                    Yayından Kaldır
+                </x-filament::button>
+            </div>
+
+            <p class="sc-help sc-help--danger" x-cloak x-show="imageError" x-text="imageError"></p>
+            <p class="sc-help sc-help--warn" x-cloak x-show="stagedImage && !broadcastAlive">
+                Yayın ekranı kapalı — görseli göndermek için önce Studio Live ekranını açın.
+            </p>
+
+            <template x-if="stagedImage">
+                <img class="sc-preview" :src="stagedImage" alt="">
             </template>
         </x-filament::section>
 
@@ -364,6 +457,8 @@
                 var PER_KEY = 'studio.control.personaUuid';
                 var DEFAULT_VOICE = @js($defaultVoice);
                 var EPISODES = @js($episodes);
+                var IMAGE_ENDPOINT = @js($imageEndpoint);
+                var DEFAULT_IMAGE_SIZE = @js($defaultImageSize);
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
 
@@ -373,6 +468,8 @@
                     episodes: EPISODES, episodeUuid: '', personaUuid: '',
                     inputMissing: false, outputMissing: false, permissionNeeded: false,
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
+                    imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, stagedImage: '',
+                    imageBusy: false, imageError: '', imageOnAir: false,
                     _bc: null, _last: 0, _iv: null,
 
                     get remainingLabel() {
@@ -421,7 +518,11 @@
                         if (this._bc) {
                             this._bc.onmessage = (e) => {
                                 var d = e.data || {};
-                                if (d.type === 'hello') { this.sendDevices(); return; }
+                                if (d.type === 'hello') {
+                                    this.sendDevices();
+                                    if (this.imageOnAir) this._pushImage();
+                                    return;
+                                }
                                 if (d.type !== 'state') return;
                                 this.connected = !!d.connected;
                                 this.muted = !!d.muted;
@@ -535,6 +636,64 @@
                     onPersonaChange: function () {
                         lsSet(PER_KEY, this.personaUuid);
                         this.sendDevices();
+                    },
+
+                    // --- Broadcast image ---------------------------------------
+                    fillPromptFromEpisode: function () {
+                        var e = this.selectedEpisode;
+                        if (!e) return;
+                        this.imagePrompt = (e.main_topic && e.main_topic !== '—') ? e.main_topic : e.title;
+                    },
+
+                    generateImage: async function () {
+                        var brief = this.imagePrompt.trim();
+                        if (brief.length < 3 || this.imageBusy) return;
+                        this.imageBusy = true;
+                        this.imageError = '';
+                        try {
+                            var token = document.querySelector('meta[name=csrf-token]');
+                            var r = await fetch(IMAGE_ENDPOINT, {
+                                method: 'POST',
+                                credentials: 'same-origin',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': token ? token.getAttribute('content') : ''
+                                },
+                                body: JSON.stringify({
+                                    prompt: brief,
+                                    size: this.imageSize || null,
+                                    episode: this.episodeUuid || null
+                                })
+                            });
+                            var body = null;
+                            try { body = await r.json(); } catch (e) { /* non-JSON */ }
+                            if (!r.ok || !body || !body.image) {
+                                this.imageError = (body && body.message) ? body.message : 'Görsel oluşturulamadı.';
+                                return;
+                            }
+                            this.stagedImage = body.image;
+                            if (this.imageOnAir) this._pushImage();
+                        } catch (e) {
+                            this.imageError = 'Görsel oluşturulamadı.';
+                        } finally {
+                            this.imageBusy = false;
+                        }
+                    },
+
+                    _pushImage: function () {
+                        if (this._bc && this.stagedImage) {
+                            this._bc.postMessage({ type: 'image', action: 'show', src: this.stagedImage });
+                        }
+                    },
+                    putImageOnAir: function () {
+                        if (!this.stagedImage) return;
+                        this.imageOnAir = true;
+                        this._pushImage();
+                    },
+                    clearImageFromAir: function () {
+                        this.imageOnAir = false;
+                        if (this._bc) this._bc.postMessage({ type: 'image', action: 'hide' });
                     },
 
                     sendDevices: function () {

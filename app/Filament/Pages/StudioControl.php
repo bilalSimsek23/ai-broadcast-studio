@@ -65,7 +65,48 @@ class StudioControl extends Page
             'voices' => is_array($voices) ? $voices : [],
             'defaultVoice' => is_string($default) && $default !== '' ? $default : 'cedar',
             'episodes' => $this->readyEpisodes(),
+            'imageEndpoint' => route('studio.image', [], absolute: false),
+            'imageSizes' => $this->imageSizes(),
+            'defaultImageSize' => $this->defaultImageSize(),
         ];
+    }
+
+    /**
+     * The pixel sizes the operator may request for a broadcast image, as
+     * key => label. The request is validated against these KEYS server-side.
+     *
+     * @return array<string, string>
+     */
+    private function imageSizes(): array
+    {
+        $sizes = config('ai.image.sizes');
+
+        if (! is_array($sizes)) {
+            return [];
+        }
+
+        $out = [];
+
+        foreach ($sizes as $key => $label) {
+            if (is_string($key) && is_string($label)) {
+                $out[$key] = $label;
+            }
+        }
+
+        return $out;
+    }
+
+    private function defaultImageSize(): string
+    {
+        $default = config('ai.image.size');
+
+        if (is_string($default) && $default !== '') {
+            return $default;
+        }
+
+        $first = array_key_first($this->imageSizes());
+
+        return is_string($first) ? $first : '1536x1024';
     }
 
     /**

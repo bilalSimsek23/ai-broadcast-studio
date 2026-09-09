@@ -19,10 +19,19 @@
             cursor: none;
         }
         #orb { display: block; }
+        /* Broadcast still image. Covers the whole screen when on air, fades
+           back to the orb when cleared. Driven ONLY from the control page. */
+        #still {
+            position: fixed; inset: 0; width: 100%; height: 100%;
+            object-fit: contain; background: #04070c;
+            opacity: 0; transition: opacity .45s ease; pointer-events: none;
+        }
+        #still.on { opacity: 1; }
     </style>
 </head>
 <body>
     <canvas id="orb" aria-hidden="true"></canvas>
+    <img id="still" alt="" aria-hidden="true">
     <audio id="sink" autoplay playsinline></audio>
 
     <script>
@@ -70,6 +79,14 @@
                         selectedEpisode = d.episodeUuid || null;
                         selectedPersona = d.personaUuid || null;
                         applyOutputDevice();
+                        return;
+                    }
+                    if (d.type === 'image') {
+                        // Broadcast still image (show/hide only) — the bytes
+                        // arrive as a data: URI from the control page.
+                        var still = $('still');
+                        if (d.action === 'show' && d.src) { still.src = d.src; still.classList.add('on'); }
+                        else if (d.action === 'hide') { still.classList.remove('on'); }
                         return;
                     }
                     if (d.type !== 'cmd') return;

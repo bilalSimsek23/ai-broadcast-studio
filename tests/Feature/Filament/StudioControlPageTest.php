@@ -83,6 +83,15 @@ class StudioControlPageTest extends TestCase
         // The unsupported-output fallback message is present.
         $response->assertSee('ses çıkışı seçimini desteklemiyor');
 
+        // Broadcast image tool: describe → generate → preview → push on air.
+        $response->assertSee('Yayın Görseli');
+        $response->assertSee('Görsel tarifi');
+        $response->assertSee('Görsel Oluştur');
+        $response->assertSee('Yayına Ver');
+        $response->assertSee('Yayından Kaldır');
+        $response->assertSee('generateImage', escape: false);
+        $response->assertSee("action: 'show'", escape: false);
+
         // No credential ever reaches this page.
         $response->assertDontSee('OPENAI_API_KEY');
         $response->assertDontSee('client_secret');

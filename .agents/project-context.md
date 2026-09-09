@@ -1,6 +1,6 @@
 # Project context — AI Broadcast Studio
 
-_Last updated: 2026-09-08 (TASK-0007 studio live realtime voice prototype)_
+_Last updated: 2026-09-09 (TASK-0008 operator broadcast still image)_
 
 ## What it is
 
@@ -71,6 +71,9 @@ _Not modelled yet (later tasks):_
   enumerates and applies physical audio devices — the server never does.)
 - No STT/TTS transcription; the realtime voice prototype plays audio only, no
   transcript. Broader voice (recorded TTS, STT pipelines) still untasked.
+- No persistence for broadcast images (TASK-0008): the operator-generated still
+  is a `data:` URI held in the browser and pushed over `BroadcastChannel`; no
+  DB, no disk, no history/audit, and the realtime AI cannot request one itself.
 - No multi-tenant / white-label concerns yet.
 - No CI/CD pipeline definition yet (planned, not in bootstrap).
 
@@ -101,9 +104,21 @@ starts already knowing the show, its persona identity, the episode topic +
 brief and every discussion topic/question, via the **shared
 `AssembleEpisodeBriefing`** (also used by the rehearsal tool). Presenter-only
 notes are excluded. No new DB / model / migration. See
-`.agents/architecture.md` §2f. **Still no** transcript/history, per-session
+`.agents/architecture.md` §2f.
+
+**Operator broadcast still image (TASK-0008).** A "Yayın Görseli" tool on the
+Studio Control page: the director types a prompt, the backend generates one
+image behind a vendor-neutral `ImageGenerationProvider` (`gpt-image-1` in prod,
+a `fake` 1×1 PNG otherwise) and returns the bytes base64-encoded (the key never
+reaches the browser), and the director previews it and pushes it to
+`/studio/live` over the same `BroadcastChannel`. The realtime directive also
+gained natural-delivery (`SESLENDİRME`) guidance so the live AI sounds more
+human. No persistence, no DB, no new model/migration. See §2g.
+
+**Still no** transcript/history, per-session
 spend caps, a human-host model, a persona→realtime-voice resolver, STT, studio
-display, avatar, or conversation engine.
+display, avatar, conversation engine, or any stored/AI-triggered broadcast
+imagery.
 
 ## Environment facts
 

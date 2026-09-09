@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\StudioImageController;
 use App\Http\Controllers\StudioLiveController;
 use App\Http\Middleware\EnsureStudioOperator;
 use Illuminate\Support\Facades\Route;
@@ -20,4 +21,10 @@ Route::middleware(EnsureStudioOperator::class)
         Route::post('live/session', [StudioLiveController::class, 'session'])
             ->middleware('throttle:12,1')
             ->name('live.session');
+
+        // Operator-generated broadcast still image. Synchronous vendor call,
+        // so it is throttled harder than the session mint.
+        Route::post('image', [StudioImageController::class, 'generate'])
+            ->middleware('throttle:6,1')
+            ->name('image');
     });

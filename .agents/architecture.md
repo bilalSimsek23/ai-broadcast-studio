@@ -1,6 +1,6 @@
 # Architecture — AI Broadcast Studio
 
-_Last updated: 2026-09-08 (TASK-0007 studio live realtime voice prototype).
+_Last updated: 2026-09-09 (TASK-0008 operator broadcast still image; §2g).
 Section 2 and its module split are the **target** shape; §§2a–2f record what is
 actually built._
 
@@ -148,7 +148,12 @@ config-driven studio noise tuning, 20-min config session cap, and — since the
 Episode-integration task — a session that binds a **Ready Episode + line-up
 persona** so the AI opens the conversation already knowing the show, its own
 persona, the episode topic/brief and every discussion topic + question
-(shared `AssembleEpisodeBriefing`) (§2f). Still missing: STT/TTS transcription,
+(shared `AssembleEpisodeBriefing`) (§2f). TASK-0008 adds an operator
+**broadcast still image** tool: the director types a prompt on the Studio
+Control page, the backend generates one image (vendor-neutral
+`ImageGenerationProvider`, `gpt-image-1` in prod), and the operator pushes it
+to `/studio/live` over the same `BroadcastChannel` — nothing is persisted
+(§2g). Still missing: STT/TTS transcription,
 studio display / avatar, conversation history/transcript persistence,
 per-session spend caps, a human-host model, and a persona `voice_id` → realtime
 voice resolver. Persona binding columns still
@@ -512,6 +517,72 @@ noiseSuppression,autoGainControl}`, `noise_reduction`,
 and in `.env.example`. Physical deviceIds / episode / persona choices are never
 here — browser localStorage only.
 
+## 2g. Broadcast still image — as built (TASK-0008)
+
+An operator tool bolted onto the studio layer: describe an image, generate it,
+preview it, and push it to the broadcast screen on command. **No persistence,
+no DB, no new model, no AI-in-the-conversation triggering** — the operator
+types every prompt and vets every result before it airs.
+
+```
+StudioControl "Yayın Görseli"                       /studio/live  <img id="still">
+  prompt + size ──POST /studio/image──► StudioImageController
+                                          → GenerateBroadcastImage
+                                             → AssembleImagePrompt (+ optional Episode context)
+                                             → ImageGenerationProvider ─► {b64 PNG}
+                                        ◄── {image: "data:image/png;base64,…"}
+  operator previews, clicks "Yayına Ver"
+  ──BroadcastChannel {type:'image', action:'show', src}──►  still.src = src; .on
+  "Yayından Kaldır" ──{type:'image', action:'hide'}──►      still.classList.remove('on')
+```
+
+**Capability** (separate from `text` and `realtime`):
+- `app/AI/Contracts/ImageGenerationProvider::generate(ImageGenerationRequest): GeneratedImage`.
+- `ImageGenerationRequest` — `prompt` + `size`. `GeneratedImage` — `mimeType` +
+  base64 `base64` + `size`; `toDataUri()` / `toArray()` (**never a credential**;
+  constructor rejects non-image MIME / non-base64 data).
+- `OpenAiImageProvider` (`app/AI/Providers/OpenAi/`) — the only place the OpenAI
+  image shape lives: `POST {base}/images/generations` (`model`/`prompt`/`size`/
+  `n`, optional non-`auto` `quality`), standing key as Bearer, `retry(1)` +
+  timeouts, same `ProviderException` family. `gpt-image-1` returns PNG b64.
+- `FakeImageProvider` (`app/AI/Providers/Fake/`) — offline default driver; a
+  real decodable 1×1 PNG, records calls.
+- `AssembleImagePrompt` (`app/AI/Prompting/`) — centralized prompt: the
+  operator brief is UNTRUSTED, held in its own segment; fixed rules after it
+  forbid on-image text / fake caption graphics. Optional Episode context
+  (program / title / main topic) when an episode is selected.
+- `GenerateBroadcastImage` (`app/AI/Imaging/`) — thin service: assemble prompt,
+  resolve size against `config('ai.image.sizes')`, call the provider.
+- `AiServiceProvider` binds all three; driver from `config('ai.image.driver')`
+  (`fake` default, `openai` in prod).
+
+**HTTP** — `POST /studio/image` (`StudioImageController`, in the `studio` group
+behind `EnsureStudioOperator`, `throttle:6,1`). Body `{prompt, size?, episode?}`;
+an unknown/absent episode is ignored (context only, not safety-critical — the
+operator vets the output). `ProviderException` → `report()` + generic
+`503 {error:"image_unavailable"}` (no vendor text / key).
+
+**Broadcast layer** — `resources/views/studio/live.blade.php` gains one
+`<img id="still">` full-screen layer (`object-fit:contain`, 0.4s fade) and an
+`{type:'image'}` BroadcastChannel handler (show/hide only). No control, no
+text added — still just the orb in steady state.
+
+**Operator layer** — a "Yayın Görseli" `<x-filament::section>`: a plain-CSS
+`<textarea>` brief (+ "Konudan doldur" from the selected episode), a size
+`<select>` (`config('ai.image.sizes')`), **Görsel Oluştur** (spinner) →
+preview `<img>` → **Yayına Ver** / **Yayından Kaldır**. The staged image lives
+only in Alpine state (not `localStorage` — base64 is too large); on a `hello`
+from a reopened broadcast screen the control page re-pushes it if still on air.
+
+**Config** — `config/ai.php` → `ai.image`: `driver` (`AI_IMAGE_DRIVER`),
+`size` + `sizes` (allow-list), `drivers`, `connections.openai`
+(`model` `gpt-image-1`, `quality`, `timeout` 60s — generation is synchronous
+and slow). All keys `env()`-overridable, documented in `.env.example`.
+
+**Not built:** persistence / history / audit of generated images; the realtime
+AI proposing an image itself (tool call); video or lower-third graphics;
+server-side image storage or a relay.
+
 ## 3. Key boundaries
 
 ### AI provider abstraction (see CLAUDE.md §5)
@@ -536,7 +607,11 @@ Domain code ──▶ GenerateText ──▶ LogicalModelResolver ──▶ Text
   operator console, synced over a browser `BroadcastChannel` — no server
   realtime/audio relay). A live session binds a **Ready Episode + line-up
   persona** and its prepared content becomes the realtime instructions.
-  Characters store a **logical name**, never a vendor.
+  Characters store a **logical name**, never a vendor. TASK-0008 §2g adds a
+  third, independent capability — `ImageGenerationProvider` +
+  `OpenAiImageProvider` / `FakeImageProvider` + `GenerateBroadcastImage` +
+  `AssembleImagePrompt` — behind `POST /studio/image` for an operator-generated
+  broadcast still image (no persistence).
 - **Not built yet:** other vendor adapters; `ProviderRateLimitException` /
   `ProviderContentFilteredException` (429/filter are `ProviderRequestException`
   cases today); a `Routing\ProviderCoordinator` in front of the interface for

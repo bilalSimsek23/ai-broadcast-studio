@@ -1,10 +1,117 @@
-<!-- task-id: TASK-0007 -->
+<!-- task-id: TASK-0008 -->
 # Current task
 
 > Completed: bootstrap · TASK-0001 core domain · TASK-0002 static analysis ·
 > TASK-0003 Filament core administration · TASK-0004 episode preparation
 > workspace · TASK-0005 AI text provider foundation · TASK-0006 OpenAI adapter
-> + Episode text rehearsal · TASK-0007 studio live realtime voice prototype.
+> + Episode text rehearsal · TASK-0007 studio live realtime voice prototype ·
+> TASK-0008 operator broadcast still image.
+
+## TASK-0008 — OPERATOR BROADCAST STILL IMAGE
+
+**Status:** COMPLETE — Pint, `php artisan test` (304 passing / 1104 assertions),
+PHPStan level 6 (0, no baseline) all green; both inline blade `<script>` blocks
+parse-check clean. Real Chrome + real OpenAI image key end-to-end is MANUAL and
+has NOT been run here.
+
+**Goal:** during a live session the operator can conjure a still image on the
+Studio Control page — type a prompt, generate, preview, and push it to the
+`/studio/live` broadcast screen — then clear it back to the orb.
+
+**Decisions (confirmed with the user):** operator types every prompt (no
+AI-in-the-conversation triggering) · **nothing is persisted** — the image lives
+only in the browser and travels over the existing `BroadcastChannel`
+(no DB, no disk, no new model/migration) · vendor-neutral behind a contract
+(`gpt-image-1` in prod, `fake` 1×1 PNG otherwise).
+
+### Built
+
+- **Capability** (`app/AI/`): `Contracts/ImageGenerationProvider`;
+  `Dtos/ImageGenerationRequest` + `Dtos/GeneratedImage` (`toDataUri()` /
+  `toArray()` — never a credential; rejects non-image MIME / non-base64);
+  `Providers/OpenAi/OpenAiImageProvider` (`POST {base}/images/generations`,
+  Bearer = standing key, `retry(1)` + timeouts, `ProviderException` family, no
+  key/prompt/body in any error); `Providers/Fake/FakeImageProvider` (offline
+  default, decodable 1×1 PNG, records calls); `Prompting/AssembleImagePrompt`
+  (centralized prompt — operator brief is UNTRUSTED, fixed rules forbid
+  on-image text / fake caption graphics, optional Episode context);
+  `Imaging/GenerateBroadcastImage` (thin service — assemble, resolve size
+  against the `config('ai.image.sizes')` allow-list, call the provider).
+  `AiServiceProvider::registerImage()` binds the driver from
+  `config('ai.image.driver')`.
+- **HTTP** — `POST /studio/image` (`App\Http\Controllers\StudioImageController`,
+  in the `studio` group behind `EnsureStudioOperator`, `throttle:6,1`). Body
+  `{prompt, size?, episode?}`; an unknown/absent episode is ignored (context
+  only). `ProviderException` → `report()` + generic
+  `503 {error:"image_unavailable"}`. Returns `{image, mime_type, size}`.
+- **Broadcast layer** — `resources/views/studio/live.blade.php`: one
+  `<img id="still">` full-screen layer (`object-fit:contain`, 0.45s fade) + an
+  `{type:'image', action:'show'|'hide', src}` BroadcastChannel handler. No
+  control / text added — steady state is still only the orb.
+- **Operator layer** — `resources/views/filament/pages/studio-control.blade.php`:
+  a "Yayın Görseli" `<x-filament::section>` — plain-CSS `<textarea>` brief
+  (+ "Konudan doldur" from the selected episode), size `<select>`, **Görsel
+  Oluştur** (spinner) → preview `<img>` → **Yayına Ver** / **Yayından Kaldır**,
+  "Yayında" badge. The staged image is Alpine state only (NOT `localStorage` —
+  base64 is too big); on a `hello` from a reopened broadcast screen the control
+  page re-pushes it if still on air. `StudioControl::getViewData()` gains
+  `imageEndpoint` / `imageSizes` / `defaultImageSize`.
+- **Config** — `config/ai.php` → `ai.image`: `driver` (`AI_IMAGE_DRIVER`),
+  `size` + `sizes` (allow-list), `drivers`, `connections.openai`
+  (`OPENAI_IMAGE_MODEL` `gpt-image-1`, `OPENAI_IMAGE_QUALITY`,
+  `OPENAI_IMAGE_TIMEOUT` 60). `.env.example` documents every key.
+- **Realtime voice delivery** — `MintStudioSession::REALTIME_DIRECTIVE` gains a
+  `SESLENDİRME:` paragraph (natural intonation / emphasis / short reactions /
+  not a news-anchor read) so the episode-bound live AI sounds more human. This
+  is behaviour, not tuning — not env-configurable. (`config('ai.realtime.instructions')`,
+  the standalone fallback, is unchanged.)
+
+### Tests (no real OpenAI network / no real browser)
+
+- `tests/Unit/AI/GeneratedImageTest.php` — data URI + neutral array; rejects
+  blank / non-base64 data, non-image MIME, blank size.
+- `tests/Feature/AI/FakeImageProviderTest.php` — contract; decodable PNG;
+  deterministic; records + resets calls.
+- `tests/Feature/AI/OpenAiImageProviderTest.php` — `Http::fake`: request →
+  `{base}/images/generations`, Bearer = standing key, `model`/`prompt`/`size`/
+  `n`; non-`auto` quality forwarded, `auto` not; missing key fails pre-send;
+  connection error → `ProviderTimeoutException` (no URL/key); non-2xx →
+  `ProviderRequestException` (status/type/code only, no prose/key); empty
+  `data` → `ProviderException`; garbage base64 → `ProviderException`.
+- `tests/Feature/AI/AssembleImagePromptTest.php` — operator brief framed with
+  the fixed rules; Episode context folded in; blank brief rejected.
+- `tests/Feature/AI/GenerateBroadcastImageTest.php` — assembled prompt reaches
+  the provider; unknown / null size → configured default; blank brief rejected.
+- `tests/Feature/Studio/StudioImageEndpointTest.php` — guest 401 / non-admin
+  403 / prompt required + min length 422; fake driver → `data:image/png;base64,…`,
+  no key / `sk-` in the body, no HTTP; selected episode enriches the prompt;
+  unknown episode ignored; size allow-list + default fallback; provider failure
+  → safe `503 image_unavailable` (no key); `throttle:6,1` (7th → 429).
+- Extended: `StudioControlPageTest` (the "Yayın Görseli" section renders) and
+  `StudioLivePageTest` (the `#still` layer + `d.type === 'image'` handler,
+  still no `<button>` / no text).
+
+### Acceptance checklist
+
+- [x] Operator "Yayın Görseli": prompt → generate → preview → **Yayına Ver** →
+      image full-screen on `/studio/live` → **Yayından Kaldır** → back to orb
+- [x] API key never reaches the browser (backend returns base64 bytes only)
+- [x] Nothing persisted — no DB / disk / model / migration; image is Alpine
+      state + a BroadcastChannel `data:` URI
+- [x] Vendor-neutral behind `ImageGenerationProvider`; `fake` default,
+      `openai` (`gpt-image-1`) in prod; centralized `AssembleImagePrompt`
+- [x] Operator brief treated as untrusted; fixed rules forbid on-image text /
+      fake caption graphics; operator vets the preview before air
+- [x] Admin-gated + `throttle:6,1`; `ProviderException` → generic `503`
+- [x] `/studio/live` steady state unchanged (orb only, no controls/text)
+- [x] Realtime AI voice: `SESLENDİRME` delivery guidance added to the live
+      directive (more human intonation / reactions)
+- [x] Pint · `php artisan test` (304) · PHPStan level 6 (0) · blade scripts
+      parse-check clean · no existing feature/test broken (additive)
+- [ ] **Manual (real Chrome + real OpenAI image key) — NOT performed here.**
+      Demo: pick a Ready episode, type e.g. "Cahiliye dönemi Arap yarımadasında
+      bir pazar yeri, gün batımı", Görsel Oluştur, Yayına Ver, confirm it fills
+      `/studio/live`, Yayından Kaldır.
 
 ## TASK-0007 — STUDIO LIVE REALTIME VOICE PROTOTYPE
 
@@ -358,7 +465,9 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 
 ### Next task (draft, not started)
 
-**TASK-0008** — not started. Do not begin without a written task here.
+**TASK-0009** — not started. Do not begin without a written task here.
 Likely follow-ups: a persisted transcript / event log for a live session;
 per-session spend caps; the human-host model/field (deferred product decision);
-a persona `voice_id` → realtime-voice resolver.
+a persona `voice_id` → realtime-voice resolver; image history / re-use / audit
+(TASK-0008 deliberately persists nothing); letting the realtime AI itself
+propose a broadcast image via a tool call.

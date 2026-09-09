@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\AI;
 
+use App\AI\Contracts\ImageGenerationProvider;
 use App\AI\Contracts\RealtimeVoiceProvider;
+use App\AI\Providers\Fake\FakeImageProvider;
 use App\AI\Providers\Fake\FakeRealtimeVoiceProvider;
 use App\AI\Providers\Fake\FakeTextProvider;
+use App\AI\Providers\OpenAi\OpenAiImageProvider;
 use App\AI\Providers\OpenAi\OpenAiRealtimeProvider;
 use App\AI\Providers\OpenAi\OpenAiTextProvider;
 use App\AI\Resolution\LogicalModelResolver;
@@ -26,6 +29,7 @@ final class AiServiceProvider extends ServiceProvider
     {
         $this->registerText();
         $this->registerRealtime();
+        $this->registerImage();
     }
 
     private function registerText(): void
@@ -94,6 +98,39 @@ final class AiServiceProvider extends ServiceProvider
             return $driver === 'openai'
                 ? $app->make(OpenAiRealtimeProvider::class)
                 : $app->make(FakeRealtimeVoiceProvider::class);
+        });
+    }
+
+    private function registerImage(): void
+    {
+        $this->app->singleton(FakeImageProvider::class);
+
+        $this->app->singleton(OpenAiImageProvider::class, static function (Application $app): OpenAiImageProvider {
+            $connection = $app->make('config')->get('ai.image.connections.openai', []);
+            $connection = is_array($connection) ? $connection : [];
+
+            return new OpenAiImageProvider(
+                apiKey: is_string($connection['api_key'] ?? null) ? $connection['api_key'] : '',
+                baseUrl: is_string($connection['base_url'] ?? null) && trim($connection['base_url']) !== ''
+                    ? $connection['base_url']
+                    : 'https://api.openai.com/v1',
+                model: is_string($connection['model'] ?? null) && trim($connection['model']) !== ''
+                    ? $connection['model']
+                    : 'gpt-image-1',
+                quality: is_string($connection['quality'] ?? null) && trim($connection['quality']) !== ''
+                    ? $connection['quality']
+                    : 'auto',
+                timeoutSeconds: self::positiveInt($connection['timeout'] ?? null, 60),
+                connectTimeoutSeconds: self::positiveInt($connection['connect_timeout'] ?? null, 10),
+            );
+        });
+
+        $this->app->singleton(ImageGenerationProvider::class, static function (Application $app): ImageGenerationProvider {
+            $driver = $app->make('config')->get('ai.image.driver');
+
+            return $driver === 'openai'
+                ? $app->make(OpenAiImageProvider::class)
+                : $app->make(FakeImageProvider::class);
         });
     }
 

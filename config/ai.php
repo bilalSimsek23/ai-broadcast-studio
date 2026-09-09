@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use App\AI\Providers\Fake\FakeImageProvider;
 use App\AI\Providers\Fake\FakeRealtimeVoiceProvider;
 use App\AI\Providers\Fake\FakeTextProvider;
+use App\AI\Providers\OpenAi\OpenAiImageProvider;
 use App\AI\Providers\OpenAi\OpenAiRealtimeProvider;
 use App\AI\Providers\OpenAi\OpenAiTextProvider;
 
@@ -204,6 +206,54 @@ return [
                 'voice' => env('OPENAI_REALTIME_VOICE', 'cedar'),
                 'timeout' => (int) env('OPENAI_REALTIME_TIMEOUT', 15),
                 'connect_timeout' => (int) env('OPENAI_REALTIME_CONNECT_TIMEOUT', 10),
+            ],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Broadcast still image (operator-generated)
+    |--------------------------------------------------------------------------
+    | A separate capability again: the operator types a prompt on the Studio
+    | Control page, the backend generates ONE image and returns the bytes
+    | base64-encoded, and the operator pushes it to the broadcast screen. The
+    | image is never stored — it lives only in the browser and travels over a
+    | same-origin BroadcastChannel.
+    |
+    | `driver`: unset / "fake" = an offline 1x1-PNG stub (local / CI / tests);
+    | "openai" = the real OpenAI image API (`POST {base}/images/generations`).
+    */
+    'image' => [
+        'driver' => env('AI_IMAGE_DRIVER', 'fake'),
+
+        // Default pixel size. The operator may pick another from `sizes`; the
+        // request is validated against these KEYS server-side.
+        'size' => env('AI_IMAGE_SIZE', '1536x1024'),
+        'sizes' => [
+            '1536x1024' => 'Yatay — 1536×1024 (yayın ekranı)',
+            '1024x1024' => 'Kare — 1024×1024',
+            '1024x1536' => 'Dikey — 1024×1536',
+        ],
+
+        'drivers' => [
+            'fake' => FakeImageProvider::class,
+            'openai' => OpenAiImageProvider::class,
+        ],
+
+        'connections' => [
+            'fake' => [],
+            'openai' => [
+                'api_key' => env('OPENAI_API_KEY'),
+                // The adapter appends `/images/generations`.
+                'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+                'model' => env('OPENAI_IMAGE_MODEL', 'gpt-image-1'),
+                // low | medium | high | auto. "auto" is the model default and is
+                // not sent on the wire.
+                'quality' => env('OPENAI_IMAGE_QUALITY', 'auto'),
+                // Generous — image generation is synchronous and slow. The
+                // calling endpoint is rate-limited (throttle:6,1).
+                'timeout' => (int) env('OPENAI_IMAGE_TIMEOUT', 60),
+                'connect_timeout' => (int) env('OPENAI_IMAGE_CONNECT_TIMEOUT', 10),
             ],
         ],
     ],

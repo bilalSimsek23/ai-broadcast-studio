@@ -84,10 +84,10 @@ final class AiServiceProvider extends ServiceProvider
                     : 'gpt-realtime',
                 voice: is_string($connection['voice'] ?? null) && trim($connection['voice']) !== ''
                     ? $connection['voice']
-                    : 'cedar',
+                    : 'marin',
                 timeoutSeconds: self::positiveInt($connection['timeout'] ?? null, 15),
                 connectTimeoutSeconds: self::positiveInt($connection['connect_timeout'] ?? null, 10),
-                turnDetection: self::numericMap(is_array($turnDetection) ? $turnDetection : []),
+                turnDetection: self::scalarMap(is_array($turnDetection) ? $turnDetection : []),
                 noiseReduction: is_string($noiseReduction) && $noiseReduction !== '' ? $noiseReduction : null,
             );
         });
@@ -140,17 +140,18 @@ final class AiServiceProvider extends ServiceProvider
     }
 
     /**
-     * Keep only string-keyed numeric entries (server_vad tuning from config).
+     * Keep only string-keyed scalar entries (turn-detection config from
+     * config/ai.php: string `type` / `eagerness`, numeric server_vad tuning).
      *
      * @param  array<array-key, mixed>  $values
-     * @return array<string, int|float>
+     * @return array<string, scalar>
      */
-    private static function numericMap(array $values): array
+    private static function scalarMap(array $values): array
     {
         $out = [];
 
         foreach ($values as $key => $value) {
-            if (is_string($key) && (is_int($value) || is_float($value))) {
+            if (is_string($key) && is_scalar($value)) {
                 $out[$key] = $value;
             }
         }

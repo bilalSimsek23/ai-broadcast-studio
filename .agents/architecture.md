@@ -441,7 +441,7 @@ migration.
   (standalone). Reads session cap (`config('ai.realtime.session_max_seconds')`,
   default 1200s, clamped [30, 3600]) + WebRTC URL + getUserMedia constraints;
   validates a director-requested voice against `config('ai.realtime.voices')`
-  (unknown → provider default, a **male** voice); returns `{client_secret,
+  (unknown → provider default, `marin`); returns `{client_secret,
   expires_at, model, voice, session_max_seconds, webrtc_url, audio_constraints}`.
   Session length + constraints live ONLY here.
 - `AssembleEpisodeBriefing` (`app/AI/Prompting/`) — the ONE provider-independent
@@ -499,7 +499,7 @@ Konu/AI Karakteri/Yayın Durumu summary — plus `enumerateDevices()` for
 `audioinput` / `audiooutput` (same-name disambiguation, permission-grant
 affordance), the **AI Ses Girişi** / **AI Ses Çıkışı** selectors + an **AI
 Sesi** voice picker (options from `config('ai.realtime.voices')`, default
-`cedar` / male, disabled while connected), "Cihazları Yenile" +
+`marin`, disabled while connected), "Cihazları Yenile" +
 `ondevicechange` auto-refresh, `localStorage` persistence of deviceIds + voice
 + episode + persona (per reji machine, **never server config**), the four
 transport/mute buttons (BAĞLAN disabled until an episode + persona are chosen),
@@ -510,12 +510,21 @@ and a "Yayın Ekranı" banner + `deviceLost` critical alert.
 `webrtc_url`, `instructions` (**standalone-fallback brief only**),
 `allow_standalone_session` (`STUDIO_LIVE_ALLOW_STANDALONE`, **default false** —
 a normal session must bind a Ready episode), **`voices`** (allow-list for the
-picker; default `cedar`, male), **`audio`** (`constraints.{echoCancellation,
+picker; **default `marin`** (natural, female), `cedar` (natural, male) the
+alternative — both listed first), **`audio`** (`constraints.{echoCancellation,
 noiseSuppression,autoGainControl}`, `noise_reduction`,
-`turn_detection.{threshold,prefix_padding_ms,silence_duration_ms}`), `drivers`,
-`connections.openai` (`voice` default `cedar`). Every key `env()`-overridable
-and in `.env.example`. Physical deviceIds / episode / persona choices are never
-here — browser localStorage only.
+`turn_detection.{type,eagerness,threshold,prefix_padding_ms,silence_duration_ms}`
+— **`type` defaults to `semantic_vad`**, revert with
+`STUDIO_LIVE_VAD_TYPE=server_vad`; `OpenAiRealtimeProvider::inputAudio()`
+branches on the type), `drivers`, `connections.openai` (`voice` default
+`marin`; `model` `gpt-realtime` in code, `OPENAI_REALTIME_MODEL` for a newer
+snapshot). The `REALTIME_DIRECTIVE` in `MintStudioSession` carries the
+ChatGPT-Live-style delivery + turn-taking behaviour (react-then-answer, answer
+objections not the script, don't restart after a barge-in, vary sentence
+length, Turkish prosody) — behaviour, not env config, and it never relaxes the
+briefing/persona/broadcast instructions. Every key `env()`-overridable and in
+`.env.example`. Physical deviceIds / episode / persona choices are never here —
+browser localStorage only.
 
 ## 2g. Broadcast still image — as built (TASK-0008)
 

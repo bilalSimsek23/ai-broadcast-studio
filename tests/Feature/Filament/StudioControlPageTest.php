@@ -57,8 +57,8 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('AI Ses Girişi');
         $response->assertSee('AI Ses Çıkışı');
         $response->assertSee('AI Sesi');
-        $response->assertSee('Cedar — erkek'); // default MALE voice, from config allow-list
-        $response->assertSee('Marin — kadın');
+        $response->assertSee('Marin — kadın'); // default voice, from config allow-list
+        $response->assertSee('Cedar — erkek'); // alternative
         $response->assertSee('Cihazları Yenile');
         $response->assertSee('Yapay zekânın dinleyeceği ses kaynağı');
         $response->assertSee('Yapay zekâ sesinin gönderileceği çıkış');
@@ -91,6 +91,8 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('Yayından Kaldır');
         $response->assertSee('generateImage', escape: false);
         $response->assertSee("action: 'show'", escape: false);
+        // Default test env uses the fake image driver → the "switch to openai" hint shows.
+        $response->assertSee('AI_IMAGE_DRIVER=openai');
 
         // No credential ever reaches this page.
         $response->assertDontSee('OPENAI_API_KEY');

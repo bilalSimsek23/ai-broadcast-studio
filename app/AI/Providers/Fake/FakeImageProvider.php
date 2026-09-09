@@ -40,8 +40,9 @@ final class FakeImageProvider implements ImageGenerationProvider
                 <stop offset="0" stop-color="#1e3a5f"/><stop offset="1" stop-color="#0b1622"/>
               </linearGradient></defs>
               <rect width="1536" height="1024" fill="url(#g)"/>
-              <text x="768" y="500" fill="#cfe3ff" font-family="sans-serif" font-size="72" font-weight="700" text-anchor="middle">PROVA GÖRSELİ</text>
-              <text x="768" y="586" fill="#8fb4d9" font-family="sans-serif" font-size="38" text-anchor="middle">{$label} · sahte sürücü</text>
+              <text x="768" y="470" fill="#cfe3ff" font-family="sans-serif" font-size="72" font-weight="700" text-anchor="middle">PROVA GÖRSELİ</text>
+              <text x="768" y="548" fill="#8fb4d9" font-family="sans-serif" font-size="34" text-anchor="middle">sahte sürücü — gerçek görsel için AI_IMAGE_DRIVER=openai</text>
+              <text x="768" y="606" fill="#6f93b8" font-family="sans-serif" font-size="28" text-anchor="middle">{$label}</text>
             </svg>
             SVG;
 

@@ -199,6 +199,36 @@ class OpenAiRealtimeProviderTest extends TestCase
         });
     }
 
+    public function test_semantic_vad_sends_eagerness_and_no_threshold_or_timeouts(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);
+
+        $provider = new OpenAiRealtimeProvider(
+            self::API_KEY, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10,
+            turnDetection: [
+                'type' => 'semantic_vad',
+                'eagerness' => 'auto',
+                // server_vad values present in config are ignored for semantic_vad
+                'threshold' => 0.6,
+                'silence_duration_ms' => 500,
+            ],
+        );
+
+        $provider->createClientSession($this->request());
+
+        Http::assertSent(function (Request $request): bool {
+            $td = $request->data()['session']['audio']['input']['turn_detection'];
+
+            return $td['type'] === 'semantic_vad'
+                && $td['eagerness'] === 'auto'
+                && $td['interrupt_response'] === true
+                && $td['create_response'] === true
+                && ! array_key_exists('threshold', $td)
+                && ! array_key_exists('silence_duration_ms', $td)
+                && ! array_key_exists('prefix_padding_ms', $td);
+        });
+    }
+
     public function test_noise_reduction_off_is_not_sent(): void
     {
         Http::fake([self::ENDPOINT => Http::response(['value' => 'ek_x', 'expires_at' => 1_900_000_000])]);

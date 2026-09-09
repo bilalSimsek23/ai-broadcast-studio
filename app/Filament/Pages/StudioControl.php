@@ -63,11 +63,12 @@ class StudioControl extends Page
 
         return [
             'voices' => is_array($voices) ? $voices : [],
-            'defaultVoice' => is_string($default) && $default !== '' ? $default : 'cedar',
+            'defaultVoice' => is_string($default) && $default !== '' ? $default : 'marin',
             'episodes' => $this->readyEpisodes(),
             'imageEndpoint' => route('studio.image', [], absolute: false),
             'imageSizes' => $this->imageSizes(),
             'defaultImageSize' => $this->defaultImageSize(),
+            'imageDriverReady' => config('ai.image.driver') === 'openai',
         ];
     }
 

@@ -162,6 +162,15 @@
                 <x-filament::badge color="success" x-cloak x-show="imageOnAir">Yayında</x-filament::badge>
             </x-slot>
 
+            @unless ($imageDriverReady)
+                <p class="sc-help sc-help--warn" style="margin-bottom: 1rem;">
+                    Sahte görsel sürücüsü etkin — üretilen görsel prompt'a göre değil, bir "PROVA"
+                    placeholder'ıdır. Gerçek görsel için <code>.env</code> dosyasında
+                    <code>AI_IMAGE_DRIVER=openai</code> ayarlayın (mevcut OpenAI anahtarını kullanır),
+                    ardından <code>php artisan config:clear</code>.
+                </p>
+            @endunless
+
             <div class="sc-fields">
                 <div class="sc-field" style="grid-column: 1 / -1;">
                     <label class="sc-label" for="sc-image-prompt">Görsel tarifi</label>

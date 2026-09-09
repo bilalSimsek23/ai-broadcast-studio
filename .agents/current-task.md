@@ -60,11 +60,34 @@ only in the browser and travels over the existing `BroadcastChannel`
   `size` + `sizes` (allow-list), `drivers`, `connections.openai`
   (`OPENAI_IMAGE_MODEL` `gpt-image-1`, `OPENAI_IMAGE_QUALITY`,
   `OPENAI_IMAGE_TIMEOUT` 60). `.env.example` documents every key.
-- **Realtime voice delivery** — `MintStudioSession::REALTIME_DIRECTIVE` gains a
-  `SESLENDİRME:` paragraph (natural intonation / emphasis / short reactions /
-  not a news-anchor read) so the episode-bound live AI sounds more human. This
-  is behaviour, not tuning — not env-configurable. (`config('ai.realtime.instructions')`,
-  the standalone fallback, is unchanged.)
+- **Realtime voice — delivery + turn-taking** (follow-up after operator
+  feedback that the API voice was less human than ChatGPT's live mode):
+  - `MintStudioSession::REALTIME_DIRECTIVE` rewritten with a ChatGPT-Live-style
+    "KONUŞMA TARZI" + "DİNLEME VE SIRA ALMA" spec: not a script-reader /
+    podcaster; short natural openers used only when they fit ("Evet…", "Bir
+    bakayım…", "Haklısın, ama…"); vary sentence length + micro-pauses; Turkish
+    prosody; react to the presenter's last point first, then answer; answer
+    objections instead of continuing the prepared flow; on barge-in stop, and
+    on the next turn answer the NEW thing (don't restart the text); mix 1–2
+    sentence and longer answers; sparse authentic fillers only. An explicit
+    "İÇERİK (AYNEN KORUNUR)" clause keeps the briefing / persona / must-cover /
+    avoid / response-length / broadcast instructions binding — this layer only
+    changes delivery. Not env-configurable.
+  - **`semantic_vad`** is the default turn-detection type (model decides the
+    speaker is done — more natural than threshold `server_vad`).
+    `config('ai.realtime.audio.turn_detection.type')` + `eagerness`
+    (`STUDIO_LIVE_VAD_TYPE` / `STUDIO_LIVE_VAD_EAGERNESS`, revert with
+    `STUDIO_LIVE_VAD_TYPE=server_vad`). `OpenAiRealtimeProvider::inputAudio()`
+    branches on the type; `AiServiceProvider` now passes the whole
+    turn-detection map (string + numeric) via `scalarMap()`.
+  - **Default voice → `marin`** (natural, female); `cedar` (natural, male) is
+    the alternative, both listed first in `config('ai.realtime.voices')`. The
+    director still switches per session. (`OPENAI_REALTIME_VOICE=marin`.)
+  - **Model** stays `gpt-realtime` in code; `.env.example` documents
+    `OPENAI_REALTIME_MODEL=gpt-realtime-2` as the newer snapshot to set if the
+    account has it (a wrong id fails every session, so no hard default).
+  - **No temperature knob** (considered, then dropped at the operator's
+    request — session `temperature` support on the GA model is unverified here).
 
 ### Tests (no real OpenAI network / no real browser)
 
@@ -82,6 +105,10 @@ only in the browser and travels over the existing `BroadcastChannel`
   the fixed rules; Episode context folded in; blank brief rejected.
 - `tests/Feature/AI/GenerateBroadcastImageTest.php` — assembled prompt reaches
   the provider; unknown / null size → configured default; blank brief rejected.
+- `tests/Feature/AI/OpenAiRealtimeProviderTest.php` — new: `semantic_vad` sends
+  `eagerness` + `interrupt_response`/`create_response`, no `threshold` /
+  timeouts. `StudioLiveSessionTest` — the openai mint now also asserts
+  `turn_detection.type === 'semantic_vad'` (config default wired through).
 - `tests/Feature/Studio/StudioImageEndpointTest.php` — guest 401 / non-admin
   403 / prompt required + min length 422; fake driver → `data:image/png;base64,…`,
   no key / `sk-` in the body, no HTTP; selected episode enriches the prompt;

@@ -138,11 +138,15 @@ class StudioLiveSessionTest extends TestCase
         $this->assertStringNotContainsString(self::STANDING_KEY, $response->getContent() ?: '');
 
         Http::assertSent(function (Request $request): bool {
+            $session = $request->data()['session'];
+
             return $request->url() === 'https://api.openai.test/v1/realtime/client_secrets'
                 && $request->hasHeader('Authorization', 'Bearer '.self::STANDING_KEY)
-                && $request->data()['session']['instructions'] === 'Stüdyo brifingi: Türkçe tartış.'
-                // no voice picked → the configured default (male) voice
-                && $request->data()['session']['audio']['output']['voice'] === 'cedar';
+                && $session['instructions'] === 'Stüdyo brifingi: Türkçe tartış.'
+                // no voice picked → the configured default voice for this test
+                && $session['audio']['output']['voice'] === 'cedar'
+                // config default turn detection is semantic_vad, wired through
+                && $session['audio']['input']['turn_detection']['type'] === 'semantic_vad';
         });
     }
 

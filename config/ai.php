@@ -146,15 +146,16 @@ return [
 
         // The voices the director may pick from on the Studio Control page. The
         // request is validated against these KEYS server-side before it is sent
-        // to the vendor. The AI defaults to a MALE voice
-        // (`connections.openai.voice`, `cedar`); an unlisted / unset choice
-        // falls back to that default.
+        // to the vendor. `marin` and `cedar` (the gpt-realtime GA pair) are the
+        // most natural — listed first. Default is `marin`
+        // (`connections.openai.voice`); an unlisted / unset choice falls back
+        // to that default.
         'voices' => [
-            'cedar' => 'Cedar — erkek',
+            'marin' => 'Marin — kadın (doğal)',
+            'cedar' => 'Cedar — erkek (doğal)',
             'ash' => 'Ash — erkek',
             'ballad' => 'Ballad — erkek',
             'verse' => 'Verse — erkek',
-            'marin' => 'Marin — kadın',
             'coral' => 'Coral — kadın',
             'sage' => 'Sage — kadın',
             'alloy' => 'Alloy — nötr',
@@ -177,12 +178,16 @@ return [
             // "far_field" suits a studio mic that is not right at the mouth.
             'noise_reduction' => env('STUDIO_LIVE_NOISE_REDUCTION', 'far_field'),
 
-            // server_vad tuning — a MILD raise of the defaults, not a hard gate.
-            // threshold: 0.5 default -> 0.6 (ignore quiet room noise);
-            // prefix_padding_ms: keep 300 so the onset of speech is not lost;
-            // silence_duration_ms: 200 default -> 500 (don't end a turn on a
-            // brief noise). Barge-in stays on (interrupt_response).
+            // Turn-detection mode. `semantic_vad` lets the model decide when the
+            // speaker is done (a more natural, human conversational feel);
+            // `eagerness` is how quickly it takes the floor. Revert to the
+            // threshold-based detector with STUDIO_LIVE_VAD_TYPE=server_vad, in
+            // which case the threshold / padding / silence values below apply (a
+            // MILD raise of the defaults, not a hard gate). Barge-in stays on
+            // (interrupt_response) either way.
             'turn_detection' => [
+                'type' => env('STUDIO_LIVE_VAD_TYPE', 'semantic_vad'),
+                'eagerness' => env('STUDIO_LIVE_VAD_EAGERNESS', 'auto'),
                 'threshold' => (float) env('STUDIO_LIVE_VAD_THRESHOLD', 0.6),
                 'prefix_padding_ms' => (int) env('STUDIO_LIVE_VAD_PREFIX_MS', 300),
                 'silence_duration_ms' => (int) env('STUDIO_LIVE_VAD_SILENCE_MS', 500),
@@ -200,10 +205,14 @@ return [
                 'api_key' => env('OPENAI_API_KEY'),
                 // The adapter appends `/realtime/client_secrets`.
                 'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+                // Env-overridable so a newer snapshot (e.g. gpt-realtime-2) can
+                // be selected without a code change; the code default stays the
+                // known-good GA id.
                 'model' => env('OPENAI_REALTIME_MODEL', 'gpt-realtime'),
-                // The AI speaks with a MALE voice. `cedar` is the male voice of
-                // the gpt-realtime GA pair (its female counterpart is `marin`).
-                'voice' => env('OPENAI_REALTIME_VOICE', 'cedar'),
+                // Default voice: `marin` (natural, female). `cedar` (natural,
+                // male) is the alternative — the director switches per session
+                // from Studio Control.
+                'voice' => env('OPENAI_REALTIME_VOICE', 'marin'),
                 'timeout' => (int) env('OPENAI_REALTIME_TIMEOUT', 15),
                 'connect_timeout' => (int) env('OPENAI_REALTIME_CONNECT_TIMEOUT', 10),
             ],

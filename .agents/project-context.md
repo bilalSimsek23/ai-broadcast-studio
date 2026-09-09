@@ -90,11 +90,14 @@ into two same-browser layers: `/studio/live` is the **clean broadcast output**
 (`/admin/studio-control`) is the director's console — Bağlan / bitir / mute,
 connection + remaining-time state, **physical AI-input / AI-output device
 selectors** (enumerated and applied in the reji browser, deviceIds persisted in
-localStorage), and an **AI voice picker** (male `cedar` by default; allow-list
+localStorage), and an **AI voice picker** (default `marin` (natural, female),
+`cedar` (natural, male) the alternative; allow-list
 `config('ai.realtime.voices')`, validated server-side). Browser mic ↔ OpenAI Realtime over **WebRTC**, ephemeral key
 minted server-side (never in the browser); config-driven studio noise handling
 (`echoCancellation`/`noiseSuppression`/`autoGainControl` + `far_field`
-`noise_reduction` + a mild `server_vad` raise, barge-in kept). **20-minute**
+`noise_reduction` + **`semantic_vad` turn detection** by default, barge-in
+kept) and a ChatGPT-Live-style delivery/turn-taking directive so the live AI
+speaks and reacts like a person, not a script-reader. **20-minute**
 session cap (config `STUDIO_LIVE_MAX_SECONDS`, default 1200, up to 60 min; the
 browser reads it from the backend). A separate `RealtimeVoiceProvider`
 capability (`fake` default, `openai` in prod). A live session **binds a

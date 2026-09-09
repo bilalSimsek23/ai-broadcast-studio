@@ -39,8 +39,10 @@ use Illuminate\Support\Facades\Http;
 final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
 {
     /**
-     * @param  array<string, int|float>  $turnDetection  optional server_vad
-     *                                                   overrides: threshold, prefix_padding_ms, silence_duration_ms
+     * @param  array<string, scalar>  $turnDetection  turn-detection config:
+     *                                                `type` (server_vad | semantic_vad); for server_vad also
+     *                                                `threshold` / `prefix_padding_ms` / `silence_duration_ms`;
+     *                                                for semantic_vad also `eagerness` (low|medium|high|auto)
      */
     public function __construct(
         private readonly string $apiKey,
@@ -112,20 +114,32 @@ final class OpenAiRealtimeProvider implements RealtimeVoiceProvider
         }
 
         if ($this->turnDetection !== []) {
+            $type = isset($this->turnDetection['type']) && is_string($this->turnDetection['type']) && $this->turnDetection['type'] !== ''
+                ? $this->turnDetection['type']
+                : 'server_vad';
+
             $vad = [
-                'type' => 'server_vad',
+                'type' => $type,
                 'create_response' => true,
                 'interrupt_response' => true,
             ];
 
-            if (isset($this->turnDetection['threshold'])) {
-                $vad['threshold'] = (float) $this->turnDetection['threshold'];
-            }
-            if (isset($this->turnDetection['prefix_padding_ms'])) {
-                $vad['prefix_padding_ms'] = (int) $this->turnDetection['prefix_padding_ms'];
-            }
-            if (isset($this->turnDetection['silence_duration_ms'])) {
-                $vad['silence_duration_ms'] = (int) $this->turnDetection['silence_duration_ms'];
+            if ($type === 'semantic_vad') {
+                // Model-decided turn end. `eagerness` is how quickly it cuts in;
+                // no fixed thresholds/timeouts apply.
+                if (isset($this->turnDetection['eagerness']) && is_string($this->turnDetection['eagerness']) && $this->turnDetection['eagerness'] !== '') {
+                    $vad['eagerness'] = $this->turnDetection['eagerness'];
+                }
+            } else {
+                if (isset($this->turnDetection['threshold']) && is_numeric($this->turnDetection['threshold'])) {
+                    $vad['threshold'] = (float) $this->turnDetection['threshold'];
+                }
+                if (isset($this->turnDetection['prefix_padding_ms']) && is_numeric($this->turnDetection['prefix_padding_ms'])) {
+                    $vad['prefix_padding_ms'] = (int) $this->turnDetection['prefix_padding_ms'];
+                }
+                if (isset($this->turnDetection['silence_duration_ms']) && is_numeric($this->turnDetection['silence_duration_ms'])) {
+                    $vad['silence_duration_ms'] = (int) $this->turnDetection['silence_duration_ms'];
+                }
             }
 
             $input['turn_detection'] = $vad;

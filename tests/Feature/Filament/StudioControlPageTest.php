@@ -96,6 +96,7 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('Yayına Ver');
         $response->assertSee('Yayından Kaldır');
         $response->assertSee('generateImage', escape: false);
+        $response->assertSee('_pollImage', escape: false); // image runs as a background job + poll
         $response->assertSee("action: 'show'", escape: false);
         $response->assertSee('Kalite');
         $response->assertSee('imageQuality', escape: false);

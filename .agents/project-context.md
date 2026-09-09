@@ -71,9 +71,11 @@ _Not modelled yet (later tasks):_
   enumerates and applies physical audio devices — the server never does.)
 - No STT/TTS transcription; the realtime voice prototype plays audio only, no
   transcript. Broader voice (recorded TTS, STT pipelines) still untasked.
-- No persistence for broadcast images (TASK-0008): the operator-generated still
-  is a `data:` URI held in the browser and pushed over `BroadcastChannel`; no
-  DB, no disk, no history/audit, and the realtime AI cannot request one itself.
+- No persistence for broadcast images (TASK-0008): generation runs as a queued
+  job whose result sits in a 10-minute cache entry keyed by a ticket; the
+  browser polls, then holds the `data:` URI and pushes it over
+  `BroadcastChannel`. No DB row, no disk, no history/audit, and the realtime AI
+  cannot request an image itself.
 - No multi-tenant / white-label concerns yet.
 - No CI/CD pipeline definition yet (planned, not in bootstrap).
 

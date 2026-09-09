@@ -22,9 +22,13 @@ Route::middleware(EnsureStudioOperator::class)
             ->middleware('throttle:12,1')
             ->name('live.session');
 
-        // Operator-generated broadcast still image. Synchronous vendor call,
-        // so it is throttled harder than the session mint.
+        // Operator-generated broadcast still image. `generate` dispatches a
+        // queued job and returns a ticket; the browser polls `status`.
         Route::post('image', [StudioImageController::class, 'generate'])
             ->middleware('throttle:6,1')
             ->name('image');
+        Route::get('image/{ticket}', [StudioImageController::class, 'status'])
+            ->whereUuid('ticket')
+            ->middleware('throttle:120,1')
+            ->name('image.status');
     });

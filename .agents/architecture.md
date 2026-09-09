@@ -534,12 +534,15 @@ no DB, no new model, no AI-in-the-conversation triggering** — the operator
 types every prompt and vets every result before it airs.
 
 ```
-StudioControl "Yayın Görseli"                       /studio/live  <img id="still">
-  prompt + size ──POST /studio/image──► StudioImageController
+StudioControl "Yayın Görseli"                        /studio/live  <img id="still">
+  prompt+size+quality ─POST /studio/image─► StudioImageController@generate
+                                     ├─ cache pending, dispatch job, ◄─ 202 {ticket}
+                                     └─ GenerateBroadcastImageJob (queue worker)
                                           → GenerateBroadcastImage
                                              → AssembleImagePrompt (+ optional Episode context)
-                                             → ImageGenerationProvider ─► {b64 PNG}
-                                        ◄── {image: "data:image/png;base64,…"}
+                                             → ImageGenerationProvider ─► {b64 image}
+                                          → Cache::put ticket {status:ready, image:data-URI}
+  browser polls  ─GET /studio/image/{ticket}─►  {status: pending|ready|failed|expired, …}
   operator previews, clicks "Yayına Ver"
   ──BroadcastChannel {type:'image', action:'show', src}──►  still.src = src; .on
   "Yayından Kaldır" ──{type:'image', action:'hide'}──►      still.classList.remove('on')
@@ -550,26 +553,37 @@ StudioControl "Yayın Görseli"                       /studio/live  <img id="sti
 - `ImageGenerationRequest` — `prompt` + `size`. `GeneratedImage` — `mimeType` +
   base64 `base64` + `size`; `toDataUri()` / `toArray()` (**never a credential**;
   constructor rejects non-image MIME / non-base64 data).
+- `ImageGenerationRequest` — `prompt` + `size` + optional `quality`.
 - `OpenAiImageProvider` (`app/AI/Providers/OpenAi/`) — the only place the OpenAI
   image shape lives: `POST {base}/images/generations` (`model`/`prompt`/`size`/
-  `n`, optional non-`auto` `quality`), standing key as Bearer, `retry(1)` +
-  timeouts, same `ProviderException` family. `gpt-image-1` returns PNG b64.
+  `n`, `quality` from the request then config, non-`auto` only), standing key as
+  Bearer, `retry(1)` + timeouts, same `ProviderException` family. `gpt-image-1`
+  returns PNG b64.
 - `FakeImageProvider` (`app/AI/Providers/Fake/`) — offline default driver; a
-  real decodable 1×1 PNG, records calls.
+  visible SVG placeholder, records calls.
 - `AssembleImagePrompt` (`app/AI/Prompting/`) — centralized prompt: the
   operator brief is UNTRUSTED, held in its own segment; fixed rules after it
   forbid on-image text / fake caption graphics. Optional Episode context
   (program / title / main topic) when an episode is selected.
 - `GenerateBroadcastImage` (`app/AI/Imaging/`) — thin service: assemble prompt,
-  resolve size against `config('ai.image.sizes')`, call the provider.
+  resolve size + quality against `config('ai.image.sizes')` / `.qualities`,
+  call the provider.
 - `AiServiceProvider` binds all three; driver from `config('ai.image.driver')`
   (`fake` default, `openai` in prod).
 
-**HTTP** — `POST /studio/image` (`StudioImageController`, in the `studio` group
-behind `EnsureStudioOperator`, `throttle:6,1`). Body `{prompt, size?, episode?}`;
-an unknown/absent episode is ignored (context only, not safety-critical — the
-operator vets the output). `ProviderException` → `report()` + generic
-`503 {error:"image_unavailable"}` (no vendor text / key).
+**HTTP (async)** — image generation runs as `App\Jobs\GenerateBroadcastImageJob`
+(`$tries=1` — billed) so a slow high-quality render is never cut by a hosted
+proxy's request timeout (CLAUDE.md §3). `POST /studio/image`
+(`StudioImageController@generate`, `throttle:6,1`) body
+`{prompt, size?, quality?, episode?}` → caches a `pending` marker under a random
+`ticket`, dispatches the job, returns `202 {ticket}`. `GET /studio/image/{ticket}`
+(`@status`, `whereUuid`, `throttle:120,1`) returns the cache entry
+`{status: pending|ready|failed|expired, image?, mime_type?, size?, message?}`.
+The job writes `ready` with the data URI; `failed()` writes a safe `failed`
+message (no vendor text / key). Nothing persists past the 10-min cache entry.
+Both routes admin-gated (`EnsureStudioOperator`). **Requires a running queue
+worker and a shared cache** (`QUEUE_CONNECTION` / `CACHE_STORE` = database or
+redis — the `.env.example` defaults).
 
 **Broadcast layer** — `resources/views/studio/live.blade.php` gains one
 `<img id="still">` full-screen layer (`object-fit:contain`, 0.4s fade) and an

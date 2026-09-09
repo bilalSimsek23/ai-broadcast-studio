@@ -4,24 +4,27 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\AI\Exceptions\ProviderException;
-use App\AI\Imaging\GenerateBroadcastImage;
-use App\Models\Episode;
+use App\Jobs\GenerateBroadcastImageJob;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 /**
- * POST /studio/image — the operator's "Görsel Oluştur" action on the Filament
- * "Canlı Yayın Kontrolü" page.
+ * The operator "Görsel Oluştur" action on the Filament "Canlı Yayın Kontrolü"
+ * page. Image generation runs as a queued job so a slow render never hits the
+ * web request timeout:
  *
- * Thin: validate, call {@see GenerateBroadcastImage}, return the image bytes as
- * a data: URI. Nothing is stored; the API key never reaches this class. The
- * generated image is NOT on air — the operator previews it and pushes it to
- * the broadcast screen from the browser over a same-origin BroadcastChannel.
+ *   POST /studio/image          -> validate, dispatch, return {ticket} (202)
+ *   GET  /studio/image/{ticket} -> {status: pending|ready|failed|expired, ...}
+ *
+ * Nothing is persisted beyond a short-lived cache entry; the API key never
+ * reaches this class. The generated image is NOT on air — the operator previews
+ * it and pushes it to the broadcast screen from the browser.
  */
 final class StudioImageController extends Controller
 {
-    public function generate(Request $request, GenerateBroadcastImage $generate): JsonResponse
+    public function generate(Request $request): JsonResponse
     {
         $data = $request->validate([
             'prompt' => ['required', 'string', 'min:3', 'max:1000'],
@@ -30,31 +33,29 @@ final class StudioImageController extends Controller
             'episode' => ['nullable', 'string', 'max:64'],
         ]);
 
-        // The episode only enriches the prompt (program / title / main topic).
-        // It is optional context, not a safety-critical binding — the operator
-        // vets the result before it airs — so an unknown uuid is simply ignored.
-        $episode = null;
-        $episodeUuid = isset($data['episode']) && is_string($data['episode']) ? trim($data['episode']) : '';
-        if ($episodeUuid !== '') {
-            $episode = Episode::query()->where('uuid', $episodeUuid)->with('show')->first();
+        $ticket = (string) Str::uuid();
+
+        Cache::put(GenerateBroadcastImageJob::cacheKey($ticket), ['status' => 'pending'], 600);
+
+        GenerateBroadcastImageJob::dispatch(
+            $ticket,
+            (string) $data['prompt'],
+            isset($data['size']) && is_string($data['size']) ? $data['size'] : null,
+            isset($data['quality']) && is_string($data['quality']) ? $data['quality'] : null,
+            isset($data['episode']) && is_string($data['episode']) ? trim($data['episode']) : null,
+        );
+
+        return response()->json(['ticket' => $ticket, 'status' => 'pending'], 202);
+    }
+
+    public function status(string $ticket): JsonResponse
+    {
+        $state = Cache::get(GenerateBroadcastImageJob::cacheKey($ticket));
+
+        if (! is_array($state)) {
+            return response()->json(['status' => 'expired'], 404);
         }
 
-        try {
-            $image = $generate(
-                (string) $data['prompt'],
-                isset($data['size']) && is_string($data['size']) ? $data['size'] : null,
-                $episode,
-                isset($data['quality']) && is_string($data['quality']) ? $data['quality'] : null,
-            );
-        } catch (ProviderException $e) {
-            report($e);
-
-            return response()->json([
-                'error' => 'image_unavailable',
-                'message' => 'Görsel oluşturulamadı. Lütfen tekrar deneyin.',
-            ], 503);
-        }
-
-        return response()->json($image->toArray());
+        return response()->json($state);
     }
 }

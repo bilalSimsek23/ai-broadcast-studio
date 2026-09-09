@@ -39,11 +39,19 @@ only in the browser and travels over the existing `BroadcastChannel`
   against the `config('ai.image.sizes')` allow-list, call the provider).
   `AiServiceProvider::registerImage()` binds the driver from
   `config('ai.image.driver')`.
-- **HTTP** — `POST /studio/image` (`App\Http\Controllers\StudioImageController`,
-  in the `studio` group behind `EnsureStudioOperator`, `throttle:6,1`). Body
-  `{prompt, size?, episode?}`; an unknown/absent episode is ignored (context
-  only). `ProviderException` → `report()` + generic
-  `503 {error:"image_unavailable"}`. Returns `{image, mime_type, size}`.
+- **HTTP (async — a slow render must not hit the web request timeout)** —
+  `POST /studio/image` (`StudioImageController@generate`, `throttle:6,1`) body
+  `{prompt, size?, quality?, episode?}` → mints a `ticket`, caches a `pending`
+  marker, dispatches **`App\Jobs\GenerateBroadcastImageJob`**, returns
+  `202 {ticket, status:"pending"}`. `GET /studio/image/{ticket}` (`@status`,
+  `whereUuid`, `throttle:120,1`) returns the cache entry `{status:
+  pending|ready|failed|expired, image?, mime_type?, size?, message?}`. The job
+  (`$tries=1` — billed call) runs `GenerateBroadcastImage` and writes
+  `{status:"ready", …toArray()}`; `failed()` writes `{status:"failed", message}`
+  (no vendor text / key). Nothing persists beyond the 10-min cache entry.
+  **Needs a running queue worker + non-array cache** (`QUEUE_CONNECTION` /
+  `CACHE_STORE` = database or redis — already the `.env.example` defaults).
+  Both routes admin-gated. An unknown/absent episode is ignored (context only).
 - **Broadcast layer** — `resources/views/studio/live.blade.php`: one
   `<img id="still">` full-screen layer (`object-fit:contain`, 0.45s fade) + an
   `{type:'image', action:'show'|'hide', src}` BroadcastChannel handler. No

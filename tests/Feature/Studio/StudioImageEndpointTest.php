@@ -109,6 +109,15 @@ class StudioImageEndpointTest extends TestCase
             ->assertJsonPath('size', config('ai.image.size'));
     }
 
+    public function test_a_quality_can_be_chosen(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->postJson('/studio/image', ['prompt' => 'bir pazar yeri', 'quality' => 'medium'])->assertOk();
+
+        $this->assertSame('medium', $this->app->make(FakeImageProvider::class)->lastCall()?->quality);
+    }
+
     public function test_a_provider_failure_degrades_to_a_safe_503_with_no_key(): void
     {
         config()->set('ai.image.driver', 'openai');

@@ -32,12 +32,34 @@ final readonly class GenerateBroadcastImage
         private Repository $config,
     ) {}
 
-    public function __invoke(string $operatorBrief, ?string $requestedSize = null, ?Episode $episode = null): GeneratedImage
-    {
+    public function __invoke(
+        string $operatorBrief,
+        ?string $requestedSize = null,
+        ?Episode $episode = null,
+        ?string $requestedQuality = null,
+    ): GeneratedImage {
         return $this->provider->generate(new ImageGenerationRequest(
             $this->prompt->forOperatorBrief($operatorBrief, $episode),
             $this->resolveSize($requestedSize),
+            $this->resolveQuality($requestedQuality),
         ));
+    }
+
+    /**
+     * A requested quality is honoured only when it is an allow-listed key in
+     * config('ai.image.qualities'); otherwise null (the adapter's configured
+     * default applies).
+     */
+    private function resolveQuality(?string $requested): ?string
+    {
+        if ($requested === null || $requested === '') {
+            return null;
+        }
+
+        $qualities = $this->config->get('ai.image.qualities');
+        $allowed = is_array($qualities) ? array_keys($qualities) : [];
+
+        return in_array($requested, $allowed, true) ? $requested : null;
     }
 
     /**

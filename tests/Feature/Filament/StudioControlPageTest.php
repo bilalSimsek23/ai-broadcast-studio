@@ -97,6 +97,8 @@ class StudioControlPageTest extends TestCase
         $response->assertSee('Yayından Kaldır');
         $response->assertSee('generateImage', escape: false);
         $response->assertSee("action: 'show'", escape: false);
+        $response->assertSee('Kalite');
+        $response->assertSee('imageQuality', escape: false);
         // Default test env uses the fake image driver → the "switch to openai" hint shows.
         $response->assertSee('AI_IMAGE_DRIVER=openai');
 

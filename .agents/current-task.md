@@ -57,9 +57,19 @@ only in the browser and travels over the existing `BroadcastChannel`
   page re-pushes it if still on air. `StudioControl::getViewData()` gains
   `imageEndpoint` / `imageSizes` / `defaultImageSize`.
 - **Config** — `config/ai.php` → `ai.image`: `driver` (`AI_IMAGE_DRIVER`),
-  `size` + `sizes` (allow-list), `drivers`, `connections.openai`
-  (`OPENAI_IMAGE_MODEL` `gpt-image-1`, `OPENAI_IMAGE_QUALITY`,
-  `OPENAI_IMAGE_TIMEOUT` 60). `.env.example` documents every key.
+  `size` + `sizes` (allow-list), **`quality` + `qualities`** (allow-list;
+  default **`low`** — generation time is quality-bound and a hosted proxy 504s
+  a slow request), `drivers`, `connections.openai` (`OPENAI_IMAGE_MODEL`
+  `gpt-image-1`, `OPENAI_IMAGE_QUALITY` default `low`, **`OPENAI_IMAGE_TIMEOUT`
+  55** — just under a typical proxy cutoff so a slow call returns a clean 503,
+  not a bodyless 504). `.env.example` documents every key.
+- **Quality is per-image** — `ImageGenerationRequest.quality`,
+  `GenerateBroadcastImage` resolves it against `ai.image.qualities`,
+  `OpenAiImageProvider` prefers the request value over its default. Studio
+  Control has a "Kalite" `<select>`; the frontend maps 504/502/408 to a
+  "zaman aşımı — Hızlı kaliteyi / kare boyutu deneyin" message. Reliable
+  medium/high still needs a longer platform request timeout or a queued job
+  (deferred).
 - **Realtime voice — delivery + turn-taking** (follow-up after operator
   feedback that the API voice was less human than ChatGPT's live mode):
   - `MintStudioSession::REALTIME_DIRECTIVE` rewritten with a ChatGPT-Live-style

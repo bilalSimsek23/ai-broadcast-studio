@@ -55,6 +55,20 @@ class GenerateBroadcastImageTest extends TestCase
         $this->assertSame('1024x1536', $image->size);
     }
 
+    public function test_an_allow_listed_quality_reaches_the_provider_request(): void
+    {
+        ($this->service())('bir pazar yeri', null, null, 'high');
+
+        $this->assertSame('high', $this->app->make(FakeImageProvider::class)->lastCall()?->quality);
+    }
+
+    public function test_an_unknown_quality_is_dropped(): void
+    {
+        ($this->service())('bir pazar yeri', null, null, 'ultra-max');
+
+        $this->assertNull($this->app->make(FakeImageProvider::class)->lastCall()?->quality);
+    }
+
     public function test_a_blank_brief_is_rejected_before_the_provider_is_called(): void
     {
         $this->expectException(InvalidArgumentException::class);

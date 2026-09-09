@@ -68,6 +68,16 @@ class OpenAiImageProviderTest extends TestCase
         Http::assertSent(fn (Request $request): bool => ! array_key_exists('quality', $request->data()));
     }
 
+    public function test_a_request_quality_overrides_the_adapter_default(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['data' => [['b64_json' => 'aGVsbG8=']]])]);
+
+        // adapter default 'low', request asks 'high'
+        $this->provider(quality: 'low')->generate(new ImageGenerationRequest('x', '1024x1024', 'high'));
+
+        Http::assertSent(fn (Request $request): bool => ($request->data()['quality'] ?? null) === 'high');
+    }
+
     public function test_a_missing_standing_key_fails_before_any_network_call(): void
     {
         Http::fake();

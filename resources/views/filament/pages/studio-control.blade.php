@@ -218,6 +218,18 @@
                         </x-filament::input.select>
                     </x-filament::input.wrapper>
                 </div>
+
+                <div class="sc-field">
+                    <label class="sc-label" for="sc-image-quality">Kalite</label>
+                    <x-filament::input.wrapper>
+                        <x-filament::input.select id="sc-image-quality" x-model="imageQuality" x-bind:disabled="imageBusy">
+                            @foreach ($imageQualities as $value => $label)
+                                <option value="{{ $value }}">{{ $label }}</option>
+                            @endforeach
+                        </x-filament::input.select>
+                    </x-filament::input.wrapper>
+                    <p class="sc-help">Yüksek kalite daha yavaş — sunucu zaman aşımına uğrarsa "Hızlı" seçin.</p>
+                </div>
             </div>
 
             <div class="sc-actions">
@@ -490,6 +502,7 @@
                 var DEFAULT_DURATION = @js($defaultDuration);
                 var IMAGE_ENDPOINT = @js($imageEndpoint);
                 var DEFAULT_IMAGE_SIZE = @js($defaultImageSize);
+                var DEFAULT_IMAGE_QUALITY = @js($defaultImageQuality);
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
 
@@ -500,8 +513,8 @@
                     durationSeconds: DEFAULT_DURATION,
                     inputMissing: false, outputMissing: false, permissionNeeded: false,
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
-                    imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, stagedImage: '',
-                    imageBusy: false, imageError: '', imageOnAir: false,
+                    imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, imageQuality: DEFAULT_IMAGE_QUALITY,
+                    stagedImage: '', imageBusy: false, imageError: '', imageOnAir: false,
                     _bc: null, _last: 0, _iv: null,
 
                     get remainingLabel() {
@@ -707,19 +720,24 @@
                                 body: JSON.stringify({
                                     prompt: brief,
                                     size: this.imageSize || null,
+                                    quality: this.imageQuality || null,
                                     episode: this.episodeUuid || null
                                 })
                             });
                             var body = null;
-                            try { body = await r.json(); } catch (e) { /* non-JSON */ }
+                            try { body = await r.json(); } catch (e) { /* non-JSON (e.g. proxy 504) */ }
                             if (!r.ok || !body || !body.image) {
-                                this.imageError = (body && body.message) ? body.message : 'Görsel oluşturulamadı.';
+                                if (r.status === 504 || r.status === 502 || r.status === 408) {
+                                    this.imageError = 'Görsel üretimi zaman aşımına uğradı. "Hızlı" kaliteyi veya kare boyutu deneyin, ya da tekrar deneyin.';
+                                } else {
+                                    this.imageError = (body && body.message) ? body.message : 'Görsel oluşturulamadı.';
+                                }
                                 return;
                             }
                             this.stagedImage = body.image;
                             if (this.imageOnAir) this._pushImage();
                         } catch (e) {
-                            this.imageError = 'Görsel oluşturulamadı.';
+                            this.imageError = 'Görsel oluşturulamadı (ağ hatası veya zaman aşımı).';
                         } finally {
                             this.imageBusy = false;
                         }

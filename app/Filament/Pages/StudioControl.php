@@ -70,8 +70,45 @@ class StudioControl extends Page
             'imageEndpoint' => route('studio.image', [], absolute: false),
             'imageSizes' => $this->imageSizes(),
             'defaultImageSize' => $this->defaultImageSize(),
+            'imageQualities' => $this->imageQualities(),
+            'defaultImageQuality' => $this->defaultImageQuality(),
             'imageDriverReady' => config('ai.image.driver') === 'openai',
         ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function imageQualities(): array
+    {
+        $qualities = config('ai.image.qualities');
+
+        if (! is_array($qualities)) {
+            return [];
+        }
+
+        $out = [];
+
+        foreach ($qualities as $key => $label) {
+            if (is_string($key) && is_string($label)) {
+                $out[$key] = $label;
+            }
+        }
+
+        return $out;
+    }
+
+    private function defaultImageQuality(): string
+    {
+        $default = config('ai.image.quality');
+
+        if (is_string($default) && array_key_exists($default, $this->imageQualities())) {
+            return $default;
+        }
+
+        $first = array_key_first($this->imageQualities());
+
+        return is_string($first) ? $first : 'low';
     }
 
     /**

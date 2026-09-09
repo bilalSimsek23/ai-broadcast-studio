@@ -56,8 +56,11 @@ final class OpenAiImageProvider implements ImageGenerationProvider
             'n' => 1,
         ];
 
-        if (trim($this->quality) !== '' && $this->quality !== 'auto') {
-            $payload['quality'] = $this->quality;
+        // Per-request quality (from Studio Control) wins over the configured
+        // default. `auto` is the model default and is not sent on the wire.
+        $quality = $request->quality ?? $this->quality;
+        if (trim($quality) !== '' && $quality !== 'auto') {
+            $payload['quality'] = $quality;
         }
 
         try {

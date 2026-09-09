@@ -26,6 +26,7 @@ final class StudioImageController extends Controller
         $data = $request->validate([
             'prompt' => ['required', 'string', 'min:3', 'max:1000'],
             'size' => ['nullable', 'string', 'max:20'],
+            'quality' => ['nullable', 'string', 'max:20'],
             'episode' => ['nullable', 'string', 'max:64'],
         ]);
 
@@ -43,6 +44,7 @@ final class StudioImageController extends Controller
                 (string) $data['prompt'],
                 isset($data['size']) && is_string($data['size']) ? $data['size'] : null,
                 $episode,
+                isset($data['quality']) && is_string($data['quality']) ? $data['quality'] : null,
             );
         } catch (ProviderException $e) {
             report($e);

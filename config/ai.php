@@ -257,6 +257,19 @@ return [
             '1024x1536' => 'Dikey — 1024×1536',
         ],
 
+        // Default quality (low | medium | high | auto). Generation time is
+        // dominated by this: `low` (~10s) is the safe default for a hosted app
+        // whose reverse proxy times out a slow request (504). Raise it only if
+        // your platform allows a longer web request timeout, or move image
+        // generation to a queued job. The operator can pick per image from
+        // `qualities` (validated against these KEYS server-side).
+        'quality' => env('OPENAI_IMAGE_QUALITY', 'low'),
+        'qualities' => [
+            'low' => 'Hızlı — düşük kalite',
+            'medium' => 'Orta',
+            'high' => 'Yüksek — yavaş (proxy zaman aşımı riski)',
+        ],
+
         'drivers' => [
             'fake' => FakeImageProvider::class,
             'openai' => OpenAiImageProvider::class,
@@ -269,12 +282,14 @@ return [
                 // The adapter appends `/images/generations`.
                 'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
                 'model' => env('OPENAI_IMAGE_MODEL', 'gpt-image-1'),
-                // low | medium | high | auto. "auto" is the model default and is
-                // not sent on the wire.
-                'quality' => env('OPENAI_IMAGE_QUALITY', 'auto'),
-                // Generous — image generation is synchronous and slow. The
-                // calling endpoint is rate-limited (throttle:6,1).
-                'timeout' => (int) env('OPENAI_IMAGE_TIMEOUT', 60),
+                // The adapter's default quality when the request doesn't carry
+                // one (mirrors `ai.image.quality`).
+                'quality' => env('OPENAI_IMAGE_QUALITY', 'low'),
+                // Kept just under a typical hosted-proxy 60s request cutoff so a
+                // slow generation aborts with a clean 503 message rather than
+                // the proxy 504ing with no body. Image generation is
+                // synchronous; the endpoint is rate-limited (throttle:6,1).
+                'timeout' => (int) env('OPENAI_IMAGE_TIMEOUT', 55),
                 'connect_timeout' => (int) env('OPENAI_IMAGE_CONNECT_TIMEOUT', 10),
             ],
         ],

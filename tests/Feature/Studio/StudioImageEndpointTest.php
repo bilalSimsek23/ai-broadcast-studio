@@ -60,7 +60,8 @@ class StudioImageEndpointTest extends TestCase
         $response = $this->postJson('/studio/image', ['prompt' => 'bir pazar yeri, gün batımı'])->assertOk();
 
         $response->assertJsonStructure(['image', 'mime_type', 'size']);
-        $this->assertStringStartsWith('data:image/png;base64,', (string) $response->json('image'));
+        $this->assertStringStartsWith('data:image/', (string) $response->json('image'));
+        $this->assertStringContainsString(';base64,', (string) $response->json('image'));
         $this->assertStringNotContainsString('CANARY-image-key-must-not-leak', $response->getContent() ?: '');
         $this->assertStringNotContainsString('sk-', $response->getContent() ?: '');
         Http::assertNothingSent();

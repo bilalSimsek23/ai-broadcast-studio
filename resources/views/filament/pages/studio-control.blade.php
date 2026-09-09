@@ -209,7 +209,6 @@
                     icon="heroicon-o-tv"
                     x-cloak
                     x-show="stagedImage && !imageOnAir"
-                    x-bind:disabled="!broadcastAlive"
                     x-on:click="putImageOnAir()"
                 >
                     Yayına Ver
@@ -227,9 +226,10 @@
             </div>
 
             <p class="sc-help sc-help--danger" x-cloak x-show="imageError" x-text="imageError"></p>
-            <p class="sc-help sc-help--warn" x-cloak x-show="stagedImage && !broadcastAlive">
-                Yayın ekranı kapalı — görseli göndermek için önce Studio Live ekranını açın.
+            <p class="sc-help sc-help--warn" x-cloak x-show="imageOnAir && !broadcastAlive">
+                Görsel işaretlendi ama yayın ekranı kapalı — Studio Live ekranını açın, görsel otomatik gidecek.
             </p>
+            <p class="sc-help" x-cloak x-show="imageOnAir && broadcastAlive">Görsel yayın ekranında.</p>
 
             <template x-if="stagedImage">
                 <img class="sc-preview" :src="stagedImage" alt="">

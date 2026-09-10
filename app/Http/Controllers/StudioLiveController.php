@@ -24,18 +24,23 @@ use Illuminate\Http\Request;
  *
  * `show()` is PUBLIC (the broadcast output is a capture source and must open
  * without a login prompt); it renders only the orb and carries no secret.
- * `session()` stays admin-gated — it mints paid credentials.
+ * `?mode=display` = a lightweight ORB + image screen (no mic / WebRTC) for a
+ * vMix web input; the default is the full AUDIO ENGINE (mic → OpenAI → audio).
+ * `session()` is token-or-admin gated — it mints paid credentials.
  */
 final class StudioLiveController extends Controller
 {
-    public function show(): View
+    public function show(Request $request): View
     {
         $ticketPlaceholder = '00000000-0000-0000-0000-000000000000';
 
         return view('studio.live', [
+            'displayMode' => $request->query('mode') === 'display',
             'sessionEndpoint' => route('studio.live.session', [], absolute: false),
             'controlEndpoint' => route('studio.live.control.read', [], absolute: false),
             'stateEndpoint' => route('studio.live.state.write', [], absolute: false),
+            'stateReadEndpoint' => route('studio.live.state.read', [], absolute: false),
+            'claimEndpoint' => route('studio.live.claim', [], absolute: false),
             'imageStatusBase' => str_replace(
                 $ticketPlaceholder,
                 '',

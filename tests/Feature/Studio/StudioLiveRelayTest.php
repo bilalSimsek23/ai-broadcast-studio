@@ -84,28 +84,35 @@ class StudioLiveRelayTest extends TestCase
         $this->postJson('/studio/live/control', ['desired' => 'sideways'])->assertStatus(422);
     }
 
-    public function test_the_screen_posts_state_and_the_console_reads_it(): void
+    public function test_the_screen_posts_state_and_both_the_console_and_a_display_screen_read_it(): void
     {
-        // Screen posts with the token only.
+        // Engine posts with the token only (incl. orb amplitude + engine id).
         $this->postJson('/studio/live/state?token='.self::TOKEN, [
             'connected' => true,
             'muted' => false,
             'remainingSeconds' => 540,
             'status' => 'Yayında',
+            'level' => 0.42,
+            'engineId' => 'engine-abc',
         ])->assertOk()->assertJsonPath('ok', true);
 
+        // Console (admin).
         $this->admin();
         $this->getJson('/studio/live/state')
             ->assertOk()
             ->assertJsonPath('connected', true)
             ->assertJsonPath('remainingSeconds', 540)
-            ->assertJsonPath('status', 'Yayında')
+            ->assertJsonPath('level', 0.42)
             ->assertJsonPath('alive', true);
     }
 
-    public function test_state_read_is_admin_only(): void
+    public function test_state_read_is_open_to_the_access_token_for_a_display_screen(): void
     {
-        $this->getJson('/studio/live/state?token='.self::TOKEN)->assertUnauthorized();
+        $this->postJson('/studio/live/state?token='.self::TOKEN, ['level' => 0.7])->assertOk();
+
+        $this->getJson('/studio/live/state?token='.self::TOKEN)
+            ->assertOk()
+            ->assertJsonPath('level', 0.7);
     }
 
     public function test_a_missing_state_reports_not_alive(): void
@@ -113,5 +120,50 @@ class StudioLiveRelayTest extends TestCase
         $this->admin();
 
         $this->getJson('/studio/live/state')->assertOk()->assertJsonPath('alive', false);
+    }
+
+    public function test_a_level_outside_zero_to_one_is_rejected(): void
+    {
+        $this->postJson('/studio/live/state?token='.self::TOKEN, ['level' => 3])->assertStatus(422);
+    }
+
+    public function test_claim_grants_the_first_engine_and_offers_takeover_to_the_next(): void
+    {
+        $this->postJson('/studio/live/claim?token='.self::TOKEN, ['engineId' => 'engine-one'])
+            ->assertOk()
+            ->assertJsonPath('granted', true)
+            ->assertJsonPath('engineId', 'engine-one');
+
+        $this->postJson('/studio/live/claim?token='.self::TOKEN, ['engineId' => 'engine-two'])
+            ->assertOk()
+            ->assertJsonPath('granted', false)
+            ->assertJsonPath('owner.engineId', 'engine-one');
+    }
+
+    public function test_a_force_claim_takes_over_and_the_old_engine_learns_it_lost(): void
+    {
+        $this->postJson('/studio/live/claim?token='.self::TOKEN, ['engineId' => 'engine-one'])
+            ->assertJsonPath('granted', true);
+
+        $this->postJson('/studio/live/claim?token='.self::TOKEN, ['engineId' => 'engine-two', 'force' => true])
+            ->assertOk()
+            ->assertJsonPath('granted', true)
+            ->assertJsonPath('engineId', 'engine-two');
+
+        // engine-one's next heartbeat is denied.
+        $this->postJson('/studio/live/claim?token='.self::TOKEN, ['engineId' => 'engine-one'])
+            ->assertOk()
+            ->assertJsonPath('granted', false)
+            ->assertJsonPath('owner.engineId', 'engine-two');
+    }
+
+    public function test_claim_needs_an_engine_id(): void
+    {
+        $this->postJson('/studio/live/claim?token='.self::TOKEN, [])->assertStatus(422);
+    }
+
+    public function test_claim_is_refused_without_admin_or_token(): void
+    {
+        $this->postJson('/studio/live/claim', ['engineId' => 'engine-x'])->assertUnauthorized();
     }
 }

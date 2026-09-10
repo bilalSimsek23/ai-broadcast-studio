@@ -26,6 +26,14 @@ final class StudioLiveRelay
 
     private const STATE_KEY = 'studio:live:state';
 
+    private const OWNER_KEY = 'studio:live:owner';
+
+    /** Ownership lease; refreshed by the engine's heartbeat every ~5 s. */
+    private const OWNER_TTL = 20;
+
+    /** Owner record older than this (seconds) is treated as no owner. */
+    private const OWNER_FRESH_SECONDS = 12;
+
     /** Control persists so a reconnecting screen picks up the current intent. */
     private const CONTROL_TTL = 86_400;
 
@@ -100,6 +108,56 @@ final class StudioLiveRelay
         $state['updatedAt'] = time();
 
         Cache::put(self::STATE_KEY, $state, self::STATE_TTL);
+    }
+
+    /**
+     * The current audio-engine owner, or null when none is fresh.
+     *
+     * @return array{engineId: string, at: int, fresh: bool}|null
+     */
+    public function owner(): ?array
+    {
+        $o = Cache::get(self::OWNER_KEY);
+
+        if (! is_array($o) || ! is_string($o['engineId'] ?? null) || $o['engineId'] === '') {
+            return null;
+        }
+
+        $at = is_int($o['at'] ?? null) ? $o['at'] : 0;
+
+        return ['engineId' => $o['engineId'], 'at' => $at, 'fresh' => (time() - $at) <= self::OWNER_FRESH_SECONDS];
+    }
+
+    /**
+     * Claim (or refresh) the single audio-engine ownership. `force` takes it
+     * over from a live owner; otherwise it is granted only when the slot is
+     * free / stale / already this engine's.
+     *
+     * @return array{granted: bool, engineId?: string, owner?: array{engineId: string, at: int, fresh: bool}}
+     */
+    public function claimOwner(string $engineId, bool $force): array
+    {
+        $record = ['engineId' => $engineId, 'at' => time()];
+
+        if ($force) {
+            Cache::put(self::OWNER_KEY, $record, self::OWNER_TTL);
+
+            return ['granted' => true, 'engineId' => $engineId];
+        }
+
+        if (Cache::add(self::OWNER_KEY, $record, self::OWNER_TTL)) {
+            return ['granted' => true, 'engineId' => $engineId];
+        }
+
+        $current = $this->owner();
+
+        if ($current === null || ! $current['fresh'] || $current['engineId'] === $engineId) {
+            Cache::put(self::OWNER_KEY, $record, self::OWNER_TTL);
+
+            return ['granted' => true, 'engineId' => $engineId];
+        }
+
+        return ['granted' => false, 'owner' => $current];
     }
 
     /**

@@ -27,12 +27,42 @@
             opacity: 0; transition: opacity .45s ease; pointer-events: none;
         }
         #still.on { opacity: 1; }
+        /* Audio-engine-only takeover / notice overlay. The clean output
+           (?mode=display) never renders this. */
+        #tk { position: fixed; inset: 0; display: none; place-items: center;
+            background: rgba(4,7,12,.85); z-index: 10; cursor: default; }
+        #tk.on { display: grid; }
+        .tk-box { max-width: 30rem; margin: 1.5rem; padding: 1.6rem 1.8rem;
+            border: 1px solid rgba(150,180,220,.25); border-radius: 14px;
+            background: #0b1622; color: #dce8f7;
+            font: 15px/1.5 system-ui, -apple-system, sans-serif; text-align: center; }
+        .tk-box h1 { margin: 0 0 .6rem; font-size: 1.1rem; }
+        .tk-box p { margin: 0 0 1.1rem; opacity: .82; }
+        .tk-actions { display: flex; gap: .7rem; justify-content: center; flex-wrap: wrap; }
+        .tk-btn { padding: .55rem 1.15rem; border-radius: 9px; cursor: pointer;
+            user-select: none; font-weight: 600; border: 1px solid rgba(150,180,220,.3); }
+        .tk-btn--go { background: #2563eb; border-color: #2563eb; color: #fff; }
+        .tk-note { display: none; margin-top: 1rem; opacity: .72; font-size: 13px; }
+        .tk-note.on { display: block; }
     </style>
 </head>
 <body>
     <canvas id="orb" aria-hidden="true"></canvas>
     <img id="still" alt="" aria-hidden="true">
     <audio id="sink" autoplay playsinline></audio>
+@unless ($displayMode)
+    <div id="tk" aria-hidden="true">
+        <div class="tk-box">
+            <h1 id="tk-title">Bu yayın ekranı başka bir yerde açık</h1>
+            <p id="tk-msg">Buradan devralırsanız yayın bu ekran üzerinden devam eder; diğer ekran devre dışı kalır.</p>
+            <div class="tk-actions">
+                <div class="tk-btn tk-btn--go" id="tk-yes" role="button" tabindex="0">Devral</div>
+                <div class="tk-btn" id="tk-no" role="button" tabindex="0">İptal</div>
+            </div>
+            <div class="tk-note" id="tk-note"></div>
+        </div>
+    </div>
+@endunless
 
     <script>
         (function () {
@@ -41,12 +71,21 @@
             var endpoint = "{{ $sessionEndpoint }}";
             var controlEndpoint = "{{ $controlEndpoint }}";
             var stateEndpoint = "{{ $stateEndpoint }}";
+            var stateReadEndpoint = "{{ $stateReadEndpoint }}";
+            var claimEndpoint = "{{ $claimEndpoint }}";
             var imageStatusBase = "{{ $imageStatusBase }}";
             var csrf = document.querySelector('meta[name=csrf-token]').getAttribute('content');
             // Access token from the URL (?token=…) — lets this screen run
             // remotely / in vMix without an admin session. Empty when opened by
             // a logged-in admin in the same browser.
             var accessToken = new URLSearchParams(location.search).get('token') || '';
+            // ?mode=display = ORB + images only, no mic / WebRTC (for vMix web
+            // input). Default = the full audio engine.
+            var displayMode = @js($displayMode);
+            var isEngine = !displayMode;
+            var myEngineId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+                : ('eng-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+            var owning = false, displayLevel = 0;
             var $ = function (id) { return document.getElementById(id); };
             var dpr = window.devicePixelRatio || 1;
 
@@ -69,7 +108,9 @@
                     remainingSeconds: remainingSeconds, status: status,
                     inputActive: activeInputId, outputSupported: outputSupported,
                     deviceError: deviceError, deviceLost: deviceLost,
-                    imageVisible: $('still').classList.contains('on')
+                    imageVisible: $('still').classList.contains('on'),
+                    level: Math.max(0, Math.min(1, speaking)),
+                    engineId: myEngineId
                 };
             }
 
@@ -81,8 +122,10 @@
                 }
             }
 
-            // Server relay: post our state so a REMOTE console can read it.
+            // Server relay: post our state so a REMOTE console / display screen
+            // can read it. Only the OWNING audio engine writes it.
             function pushState() {
+                if (!owning) return;
                 fetch(stateEndpoint, {
                     method: 'POST', credentials: 'same-origin',
                     headers: authHeaders({ 'Content-Type': 'application/json', 'Accept': 'application/json' }),
@@ -113,7 +156,7 @@
                         else if (d.action === 'hide') { still.classList.remove('on'); shownImageTicket = null; }
                         return;
                     }
-                    if (d.type !== 'cmd') return;
+                    if (d.type !== 'cmd' || !owning) return;
                     if (d.cmd === 'connect') connect();
                     else if (d.cmd === 'hangup') hangup('Görüşme bitti');
                     else if (d.cmd === 'mute') setMuted(true);
@@ -143,6 +186,9 @@
                 } else if (!img.visible && $('still').classList.contains('on')) {
                     $('still').classList.remove('on'); shownImageTicket = null;
                 }
+
+                // Display-only screens never touch audio.
+                if (!owning) return;
 
                 if (doc.muted !== undefined && !!doc.muted !== muted) setMuted(!!doc.muted);
 
@@ -177,13 +223,121 @@
                   .catch(function () {});
             }
 
-            // Heartbeat: BroadcastChannel (same browser) + server relay (remote).
-            setInterval(function () { publish(); pushState(); }, 2000);
-            setInterval(pollControl, 2000);
-            publish();
-            pushState();
-            pollControl();
-            if (bc) bc.postMessage({ type: 'hello' });
+            // --- display-only screen (vMix web input): orb amplitude + images --
+            function pollDisplayState() {
+                fetch(stateReadEndpoint, {
+                    credentials: 'same-origin',
+                    headers: authHeaders({ 'Accept': 'application/json' })
+                }).then(function (r) { return r.ok ? r.json() : null; })
+                  .then(function (st) {
+                      if (st && st.alive) {
+                          displayLevel = (typeof st.level === 'number') ? st.level : 0;
+                      } else {
+                          displayLevel = 0;
+                      }
+                  }).catch(function () {});
+            }
+
+            // --- audio engine ownership (single active engine) ----------------
+            var _engineIvs = [];
+            function claim(force) {
+                return fetch(claimEndpoint, {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: authHeaders({ 'Content-Type': 'application/json', 'Accept': 'application/json' }),
+                    body: JSON.stringify({ engineId: myEngineId, force: !!force })
+                }).then(function (r) { return r.ok ? r.json() : null; });
+            }
+
+            function startEngine() {
+                if (owning) return;
+                owning = true;
+                hideTk();
+                _engineIvs.push(setInterval(ownerHeartbeat, 5000));
+                var tick = 0;
+                _engineIvs.push(setInterval(function () {
+                    tick++;
+                    if (pc || tick % 4 === 0) { publish(); pushState(); }
+                }, 500));
+                _engineIvs.push(setInterval(pollControl, 2000));
+                publish(); pushState(); pollControl();
+                if (bc) bc.postMessage({ type: 'hello' });
+            }
+
+            function stopEngine() {
+                owning = false;
+                _engineIvs.forEach(clearInterval);
+                _engineIvs = [];
+            }
+
+            function ownerHeartbeat() {
+                claim(false).then(function (res) {
+                    if (res && res.granted === false) {
+                        // Someone took over from another screen.
+                        stopEngine();
+                        hangup('Devralındı');
+                        showTk('Yayın başka bir ekrana devralındı',
+                            'Bu ekran artık pasif. Yayını buraya geri almak için devralın.',
+                            'Buradan Devral', 'Kapat');
+                    }
+                }).catch(function () {});
+            }
+
+            function showTk(title, msg, yes, no) {
+                if (displayMode) return;
+                var t = $('tk-title'), m = $('tk-msg'), y = $('tk-yes'), n = $('tk-no');
+                if (!t) return;
+                t.textContent = title; m.textContent = msg;
+                y.textContent = yes; n.textContent = no;
+                $('tk-note').classList.remove('on');
+                $('tk').classList.add('on');
+            }
+            function hideTk() { var el = $('tk'); if (el) el.classList.remove('on'); }
+
+            @unless ($displayMode)
+            (function wireTk() {
+                var y = $('tk-yes'), n = $('tk-no');
+                var go = function () { claim(true).then(function (res) {
+                    if (res && res.granted) startEngine();
+                }); };
+                var dismiss = function () {
+                    hideTk();
+                    if (!owning) {
+                        $('tk-note').textContent = 'Bu ekran pasif — başka bir yayın ekranı aktif.';
+                        $('tk-note').classList.add('on');
+                        $('tk').classList.add('on');
+                        $('tk-title').textContent = 'Pasif ekran';
+                        $('tk-msg').textContent = '';
+                        $('tk').querySelector('.tk-actions').style.display = 'none';
+                    }
+                };
+                y.addEventListener('click', go);
+                n.addEventListener('click', dismiss);
+                y.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') go(); });
+                n.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') dismiss(); });
+            })();
+            @endunless
+
+            // --- boot --------------------------------------------------------
+            if (displayMode) {
+                setInterval(pollControl, 2000);
+                setInterval(pollDisplayState, 400);
+                pollControl();
+                pollDisplayState();
+            } else {
+                claim(false).then(function (res) {
+                    if (res && res.granted) {
+                        startEngine();
+                    } else if (res && res.owner) {
+                        showTk('Bu yayın ekranı başka bir yerde açık',
+                            'Buradan devralırsanız yayın bu ekran üzerinden devam eder; diğer ekran devre dışı kalır.',
+                            'Devral', 'İptal');
+                    } else {
+                        // Relay unreachable — run standalone so a same-browser
+                        // admin session still works.
+                        startEngine();
+                    }
+                }).catch(function () { startEngine(); });
+            }
 
             // Autoplay unlock — one click anywhere on the broadcast screen.
             document.addEventListener('click', function () {
@@ -392,7 +546,9 @@
                 g2d.clearRect(0, 0, S, S);
 
                 var a = 0;
-                if (analyser) {
+                if (displayMode) {
+                    a = Math.max(0, Math.min(1, displayLevel));
+                } else if (analyser) {
                     analyser.getByteFrequencyData(freq);
                     var sum = 0;
                     for (var i = 0; i < freq.length; i++) sum += freq[i];

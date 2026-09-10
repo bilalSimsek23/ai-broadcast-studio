@@ -41,10 +41,17 @@ the only path for a remote screen.
   403, guest → 401.
 - `bootstrap/app.php` — CSRF excluded for `studio/live/session` + `studio/live/state`
   (token-bearer, no cookie); every other route keeps CSRF.
-- `resources/views/studio/live.blade.php` — reads `?token=`; `pollControl()` (1 s)
+- `resources/views/studio/live.blade.php` — reads `?token=`; `pollControl()` (2 s)
   reconciles the control doc (`desired` → connect/hangup, `muted`, image by
-  ticket via `GET /studio/image/{ticket}`); `pushState()` (2 s, + per-second
-  while counting down) posts its state; `connecting` guard prevents re-entry.
+  ticket via `GET /studio/image/{ticket}`); `pushState()` posts its state;
+  `connecting` guard + a 10 s connect cooldown prevent a retry storm.
+  **`?mode=display`** = a lightweight ORB + images screen (vMix web input): no
+  mic / WebRTC / session mint; it polls `GET /studio/live/state` for the orb
+  amplitude (`level`) which the engine posts. **Single-owner audio engine:** on
+  load it `POST /studio/live/claim {engineId}`; if another engine is live it
+  shows a takeover prompt (`#tk`, `<div role=button>` — no `<button>`); a 5 s
+  ownership heartbeat detects a takeover from elsewhere → hangs up + offers to
+  take it back. Only the OWNING engine writes state / acts on `desired`.
 - `resources/views/filament/pages/studio-control.blade.php` — `_pushControl()`
   writes the intent doc on every action (`send`/`sendDevices`/image); on load it
   **adopts** the server's current `desired` so a console reload does not reset a
@@ -52,6 +59,14 @@ the only path for a remote screen.
   BroadcastChannel heartbeat is heard.
 - `config('ai.realtime.public_access_token')` + `.env.example` doc. **Needs the
   same running queue/cache backend as image generation.**
+- **Split for vMix** (vMix's web input can't do mic/WebRTC): run the full
+  page (audio engine) in a real Chrome — its AI audio out → a virtual audio
+  cable → vMix audio input (or vMix desktop-audio capture) — and open
+  `?mode=display` in the vMix web browser input for the orb + lower-thirds.
+  Studio Control shows both URLs (engine + display) with copy buttons.
+- `StudioLiveRelay` gains `owner()` / `claimOwner(engineId, force)` (atomic
+  `Cache::add` for the first claim; `force` for takeover). `GET /studio/live/state`
+  moved to `StudioBroadcastAccess` (a display screen reads `level`).
 
 **Risk (operator-accepted):** if the `?token=` URL leaks, someone can mint
 short-lived ephemeral OpenAI secrets (rate-limited 12/min) until the token is

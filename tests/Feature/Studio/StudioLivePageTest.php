@@ -48,6 +48,12 @@ class StudioLivePageTest extends TestCase
         $response->assertSee('X-Studio-Token', escape: false);
         $response->assertSee("URLSearchParams(location.search).get('token')", escape: false);
 
+        // Default = audio engine: single-owner claim + a takeover prompt.
+        $response->assertSee('var displayMode = false', escape: false);
+        $response->assertSee('id="tk"', escape: false);
+        $response->assertSee('claimEndpoint', escape: false);
+        $response->assertSee('Devral');
+
         // A broadcast still-image layer exists, shown/hidden from the control
         // page only (no controls on the output itself).
         $response->assertSee('id="still"', escape: false);
@@ -66,6 +72,22 @@ class StudioLivePageTest extends TestCase
         // No transcript, no credential leak.
         $response->assertDontSee('transcript');
         $response->assertDontSee('OPENAI_API_KEY');
+        $response->assertDontSee('sk-');
+    }
+
+    public function test_display_mode_is_orb_and_images_only_no_mic_no_takeover(): void
+    {
+        $response = $this->get('/studio/live?mode=display')->assertOk();
+
+        $response->assertSee('id="orb"', escape: false);
+        $response->assertSee('id="still"', escape: false);
+        $response->assertSee('var displayMode = true', escape: false);
+        $response->assertSee('pollDisplayState', escape: false);
+
+        // No visible audio-engine chrome on the display feed: the takeover
+        // overlay element is not emitted, and there are no buttons.
+        $response->assertDontSee('id="tk"', escape: false);
+        $response->assertDontSee('<button', escape: false);
         $response->assertDontSee('sk-');
     }
 }

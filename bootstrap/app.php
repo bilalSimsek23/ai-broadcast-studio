@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'studio/live/session',
             'studio/live/state',
+            'studio/live/claim',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

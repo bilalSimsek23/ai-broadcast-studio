@@ -61,10 +61,26 @@ final class StudioLiveRelayController extends Controller
             'deviceError' => ['nullable', 'boolean'],
             'deviceLost' => ['nullable', 'boolean'],
             'imageVisible' => ['nullable', 'boolean'],
+            // Orb amplitude (0..1) for a display-only screen; engine id so a
+            // display screen can tell which engine is feeding it.
+            'level' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'engineId' => ['nullable', 'string', 'max:64'],
         ]);
 
         $relay->putState($data);
 
         return response()->json(['ok' => true]);
+    }
+
+    public function claim(Request $request, StudioLiveRelay $relay): JsonResponse
+    {
+        $data = $request->validate([
+            'engineId' => ['required', 'string', 'min:6', 'max:64'],
+            'force' => ['nullable', 'boolean'],
+        ]);
+
+        return response()->json(
+            $relay->claimOwner((string) $data['engineId'], (bool) ($data['force'] ?? false)),
+        );
     }
 }

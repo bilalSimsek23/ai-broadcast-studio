@@ -64,11 +64,13 @@ class StudioControl extends Page
         $token = config('ai.realtime.public_access_token');
         $tokenSet = is_string($token) && $token !== '';
         $broadcastUrl = url('/studio/live').($tokenSet ? '?token='.rawurlencode($token) : '');
+        $broadcastDisplayUrl = $broadcastUrl.($tokenSet ? '&' : '?').'mode=display';
 
         return [
             'voices' => is_array($voices) ? $voices : [],
             'defaultVoice' => is_string($default) && $default !== '' ? $default : 'marin',
             'broadcastUrl' => $broadcastUrl,
+            'broadcastDisplayUrl' => $broadcastDisplayUrl,
             'broadcastTokenSet' => $tokenSet,
             'episodes' => $this->readyEpisodes(),
             'durations' => $this->sessionDurations(),

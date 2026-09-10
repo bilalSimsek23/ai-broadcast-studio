@@ -642,8 +642,17 @@ console (admin)                         cache                       screen (admi
   `EnsureStudioOperator` (admin only). `bootstrap/app.php` excludes CSRF for
   `studio/live/session` + `studio/live/state` (token-bearer, no cookie).
 - Broadcast blade: reads `?token=`; `pollControl()` reconciles; `pushState()`
-  posts state; `connecting` guard. It still prefers `BroadcastChannel` when the
-  console is in the same browser.
+  posts state; `connecting` guard + 10 s connect cooldown. Still prefers
+  `BroadcastChannel` when the console is in the same browser.
+  - **`?mode=display`** — a lightweight ORB + images screen for vMix's web
+    input (which cannot do mic/WebRTC): no session mint, no getUserMedia; it
+    polls `GET /studio/live/state` for the orb amplitude (`level`) the engine
+    posts. Run the FULL page (audio engine) in a real Chrome and route its AI
+    audio into vMix (virtual cable / desktop capture).
+  - **Single-owner audio engine** — on load `POST /studio/live/claim {engineId}`
+    (atomic `Cache::add`; `force` = takeover). A second engine is offered a
+    takeover prompt; a 5 s ownership heartbeat makes a superseded engine hang
+    up. Only the owner writes state / acts on `desired`.
 - Console blade: `_pushControl()` on every action; **adopts** the server's
   current `desired` on load so a console reload never resets a running
   broadcast; `pollRemoteState()` drives the readouts when no BroadcastChannel

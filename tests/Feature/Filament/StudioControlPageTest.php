@@ -121,7 +121,9 @@ class StudioControlPageTest extends TestCase
         $this->get('/admin/studio-control')
             ->assertOk()
             ->assertSee('studio/live?token=SECRET-XYZ-123')
-            ->assertSee('Yayın ekranı adresi')
+            ->assertSee('studio/live?token=SECRET-XYZ-123&amp;mode=display', escape: false)
+            ->assertSee('Ses motoru')
+            ->assertSee('vMix web input')
             ->assertDontSee('STUDIO_LIVE_ACCESS_TOKEN ayarlı değil');
     }
 

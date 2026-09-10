@@ -288,14 +288,20 @@
                     Yayın ekranını bu tarayıcıda VEYA aşağıdaki adresle uzakta (vMix / OBS) açın.
                 </p>
                 <p class="sc-help" style="word-break: break-all;">
-                    Yayın ekranı adresi:
+                    <strong>Ses motoru</strong> (mikrofonlu Chrome — reji PC):<br>
                     <code>{{ $broadcastUrl }}</code>
-                    <button type="button" class="sc-linkbtn" x-on:click="copyBroadcastUrl()">kopyala</button>
-                    <span x-cloak x-show="urlCopied"> ✓</span>
-                    @unless ($broadcastTokenSet)
-                        <br><span class="sc-help--warn">STUDIO_LIVE_ACCESS_TOKEN ayarlı değil — uzak ekran yalnızca giriş yapmış adminde çalışır.</span>
-                    @endunless
+                    <button type="button" class="sc-linkbtn" x-on:click="copyBroadcastUrl('engine')">kopyala</button>
+                    <span x-cloak x-show="urlCopied === 'engine'"> ✓</span>
                 </p>
+                <p class="sc-help" style="word-break: break-all;">
+                    <strong>Görüntü</strong> (vMix web input — orb + görsel, ses yok):<br>
+                    <code>{{ $broadcastDisplayUrl }}</code>
+                    <button type="button" class="sc-linkbtn" x-on:click="copyBroadcastUrl('display')">kopyala</button>
+                    <span x-cloak x-show="urlCopied === 'display'"> ✓</span>
+                </p>
+                @unless ($broadcastTokenSet)
+                    <p class="sc-help sc-help--warn">STUDIO_LIVE_ACCESS_TOKEN ayarlı değil — uzak ekran yalnızca giriş yapmış adminde çalışır.</p>
+                @endunless
             </div>
             <x-filament::button
                 tag="a"
@@ -519,6 +525,7 @@
                 var CONTROL_READ = @js($controlReadEndpoint);
                 var STATE_READ = @js($stateReadEndpoint);
                 var BROADCAST_URL = @js($broadcastUrl);
+                var BROADCAST_DISPLAY_URL = @js($broadcastDisplayUrl);
                 var CSRF = (document.querySelector('meta[name=csrf-token]') || {}).content || '';
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
@@ -688,13 +695,14 @@
                             }).catch(() => {});
                     },
 
-                    copyBroadcastUrl: function () {
-                        var done = () => { this.urlCopied = true; setTimeout(() => { this.urlCopied = false; }, 2000); };
+                    copyBroadcastUrl: function (which) {
+                        var url = which === 'display' ? BROADCAST_DISPLAY_URL : BROADCAST_URL;
+                        var done = () => { this.urlCopied = which; setTimeout(() => { this.urlCopied = false; }, 2000); };
                         if (navigator.clipboard && navigator.clipboard.writeText) {
-                            navigator.clipboard.writeText(BROADCAST_URL).then(done).catch(function () {});
+                            navigator.clipboard.writeText(url).then(done).catch(function () {});
                         } else {
                             var t = document.createElement('textarea');
-                            t.value = BROADCAST_URL; document.body.appendChild(t); t.select();
+                            t.value = url; document.body.appendChild(t); t.select();
                             try { document.execCommand('copy'); done(); } catch (e) {}
                             document.body.removeChild(t);
                         }

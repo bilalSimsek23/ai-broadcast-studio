@@ -42,8 +42,18 @@ Route::middleware(StudioBroadcastAccess::class)
             ->middleware('throttle:600,1')
             ->name('control.read');
         Route::post('state', [StudioLiveRelayController::class, 'writeState'])
-            ->middleware('throttle:600,1')
+            ->middleware('throttle:1200,1')
             ->name('state.write');
+        // Readable by the token too: a display-only screen (vMix web input)
+        // polls it for the orb amplitude. Nothing sensitive in the state doc.
+        Route::get('state', [StudioLiveRelayController::class, 'readState'])
+            ->middleware('throttle:1200,1')
+            ->name('state.read');
+        // Single-owner claim for the AUDIO ENGINE screen: opening one elsewhere
+        // is offered a takeover.
+        Route::post('claim', [StudioLiveRelayController::class, 'claim'])
+            ->middleware('throttle:600,1')
+            ->name('claim');
     });
 
 // Operator console only — admin session required.
@@ -54,9 +64,6 @@ Route::middleware(EnsureStudioOperator::class)
         Route::post('live/control', [StudioLiveRelayController::class, 'writeControl'])
             ->middleware('throttle:600,1')
             ->name('live.control.write');
-        Route::get('live/state', [StudioLiveRelayController::class, 'readState'])
-            ->middleware('throttle:600,1')
-            ->name('live.state.read');
 
         // Operator-generated broadcast still image. `generate` dispatches a
         // queued job and returns a ticket.

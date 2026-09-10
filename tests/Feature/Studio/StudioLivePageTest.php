@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Studio;
 
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -12,22 +11,20 @@ class StudioLivePageTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_a_guest_is_redirected_to_the_admin_login(): void
+    public function test_the_broadcast_screen_is_public_no_login_prompt(): void
     {
-        $this->get('/studio/live')->assertRedirect('/admin/login');
-    }
-
-    public function test_an_authenticated_non_admin_gets_403(): void
-    {
-        $this->actingAs(User::factory()->create(['is_admin' => false]));
-
-        $this->get('/studio/live')->assertForbidden();
+        // Opened as a display / capture source (Remix, OBS, spare monitor) — a
+        // guest must NOT be bounced to a login. The page holds no credential
+        // and does nothing without operator commands.
+        $this->get('/studio/live')
+            ->assertOk()
+            ->assertSee('id="orb"', escape: false)
+            ->assertDontSee('sk-')
+            ->assertDontSee('OPENAI_API_KEY');
     }
 
     public function test_the_broadcast_output_is_only_the_orb_no_controls_no_text(): void
     {
-        $this->actingAs(User::factory()->admin()->create());
-
         $response = $this->get('/studio/live')->assertOk();
 
         // The orb canvas is the whole visible page.

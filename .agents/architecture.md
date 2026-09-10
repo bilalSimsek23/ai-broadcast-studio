@@ -460,10 +460,13 @@ migration.
   resolver / service are plain autowired classes.
 
 **HTTP** (`routes/web.php`, `StudioLiveController`, `EnsureStudioOperator`):
-`GET /studio/live` (clean broadcast Blade) and `POST /studio/live/session`
-(body `{voice?, episode?, persona?}`; `throttle:12,1`; `ResolveStudioEpisode` →
-`422 {error, message}` on any invalid selection; `ProviderException` →
-`report()` + generic `503`). Both admin-gated. The Filament
+`GET /studio/live` (clean broadcast Blade) is **PUBLIC** (`throttle:60,1`) — it
+is a capture source (Remix / OBS / spare monitor) and must open without a login
+prompt; it carries no secret and does nothing without operator commands.
+`POST /studio/live/session` (body `{voice?, episode?, persona?, max_seconds?}`;
+`throttle:12,1`; `ResolveStudioEpisode` → `422 {error, message}` on any invalid
+selection; `ProviderException` → `report()` + generic `503`) stays **admin-gated**
+(it mints paid credentials), as do the image endpoints. The Filament
 `App\Filament\Pages\StudioControl` (`/admin/studio-control`) is auto-discovered
 and panel-gated + `canAccess()`; its `getViewData()` lists Ready episodes with
 their line-ups.

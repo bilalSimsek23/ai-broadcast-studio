@@ -21,6 +21,10 @@ use Illuminate\Http\Request;
  * {@see ResolveStudioEpisode}; the instructions are built in
  * {@see MintStudioSession}; the vendor call is in the configured
  * RealtimeVoiceProvider. Nothing here ever sees the API key.
+ *
+ * `show()` is PUBLIC (the broadcast output is a capture source and must open
+ * without a login prompt); it renders only the orb and carries no secret.
+ * `session()` stays admin-gated — it mints paid credentials.
  */
 final class StudioLiveController extends Controller
 {

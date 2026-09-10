@@ -10,14 +10,23 @@ Route::get('/', function () {
 });
 
 /*
- * Studio live realtime voice prototype (TASK-0007). Admin-gated. The session
- * endpoint mints a short-lived ephemeral OpenAI secret and is rate-limited.
+ * Studio live realtime voice prototype (TASK-0007).
+ *
+ * The broadcast OUTPUT screen (GET /studio/live) is PUBLIC so it can be opened
+ * as a display / capture source (Remix, OBS, a spare monitor) without a login
+ * prompt. It renders only the orb, holds NO credential, and does nothing on its
+ * own — it acts only on commands from the operator console over a same-origin
+ * BroadcastChannel. The credential-minting and image endpoints below stay
+ * admin-gated and rate-limited.
  */
+Route::get('studio/live', [StudioLiveController::class, 'show'])
+    ->middleware('throttle:60,1')
+    ->name('studio.live');
+
 Route::middleware(EnsureStudioOperator::class)
     ->prefix('studio')
     ->name('studio.')
     ->group(function (): void {
-        Route::get('live', [StudioLiveController::class, 'show'])->name('live');
         Route::post('live/session', [StudioLiveController::class, 'session'])
             ->middleware('throttle:12,1')
             ->name('live.session');

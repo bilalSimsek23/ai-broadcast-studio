@@ -242,8 +242,10 @@ between a real studio host and the AI, split into a **clean broadcast layer**
 (`/studio/live`, orb only) and an **operator layer** (Filament) in the same
 browser.
 
-**Decisions (confirmed with the user):** authenticated only (admin) · WebRTC +
-ephemeral key · session auto-ends at 20 min (config, up to 60) · device
+**Decisions (confirmed with the user):** the broadcast screen `GET /studio/live`
+is **public** (capture source, no login prompt); credential-minting + image
+endpoints stay admin-gated · WebRTC + ephemeral key · session length operator-set
+(config menu, incl. no limit) · device
 discovery + deviceId management entirely in the reji browser (never Laravel) ·
 **a live session binds a Ready Episode + one line-up persona; no episode ⇒
 refused (unless `allow_standalone_session`)** · no new DB / model / migration.
@@ -299,7 +301,9 @@ control on another).
 
 **HTTP surface** — `routes/web.php`:
 - `GET /studio/live` → `StudioLiveController@show` — the clean broadcast Blade
-  (orb only).
+  (orb only). **PUBLIC** (`throttle:60,1`, `noindex`) so it can be a Remix / OBS
+  capture source with no login prompt; no secret in the page, inert without
+  operator commands.
 - `POST /studio/live/session` (body `{voice?, episode?, persona?}`) →
   `ResolveStudioEpisode` (→ `422 {error, message}` on any invalid selection,
   NO silent fallback) → `MintStudioSession($voice, $context)`; returns
@@ -309,8 +313,9 @@ control on another).
   {error:"realtime_unavailable"}` (no key/vendor text). `throttle:12,1`.
   Missing `episode` → `422 episode_required` unless
   `config('ai.realtime.allow_standalone_session')`.
-- Both behind `App\Http\Middleware\EnsureStudioOperator` — guest → `/admin/login`
-  (or `401` JSON), non-admin → `403`.
+- `POST /studio/live/session` + both image endpoints stay behind
+  `App\Http\Middleware\EnsureStudioOperator` — guest → `/admin/login`
+  (or `401` JSON), non-admin → `403`. (`GET /studio/live` is public — see above.)
 - The Filament page **`App\Filament\Pages\StudioControl`** (`/admin/studio-control`)
   is auto-discovered; panel-gated to admins + its own `canAccess()` check.
 
@@ -446,8 +451,8 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
   GÖREVİ:" — and NO presenter-only markers**; multi-persona uses the chosen
   persona; openai driver forwards the briefing as `session.instructions` with
   the standing key intact; standalone still works when explicitly allowed.
-- `tests/Feature/Studio/StudioLivePageTest.php` — guest → `/admin/login`;
-  non-admin → 403; admin → **only the orb**: no `<button>`, no `#controls` /
+- `tests/Feature/Studio/StudioLivePageTest.php` — **public (guest → 200, no
+  login prompt)**; **only the orb**: no `<button>`, no `#controls` /
   `#connect` / `#hangup` / `#timer` / `#status`, no "Yayın görünümü"; carries
   `BroadcastChannel('studio-live')`, `startTimer(s.session_max_seconds)` (no
   `|| 600`), `deviceId: { exact: inputDeviceId }`, `setSinkId`; no transcript /

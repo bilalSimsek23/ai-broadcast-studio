@@ -207,7 +207,7 @@ class OpenAiRealtimeProviderTest extends TestCase
             self::API_KEY, self::BASE_URL, 'gpt-realtime', 'marin', 15, 10,
             turnDetection: [
                 'type' => 'semantic_vad',
-                'eagerness' => 'auto',
+                'eagerness' => 'low',
                 // server_vad values present in config are ignored for semantic_vad
                 'threshold' => 0.6,
                 'silence_duration_ms' => 500,
@@ -220,7 +220,7 @@ class OpenAiRealtimeProviderTest extends TestCase
             $td = $request->data()['session']['audio']['input']['turn_detection'];
 
             return $td['type'] === 'semantic_vad'
-                && $td['eagerness'] === 'auto'
+                && $td['eagerness'] === 'low'
                 && $td['interrupt_response'] === true
                 && $td['create_response'] === true
                 && ! array_key_exists('threshold', $td)

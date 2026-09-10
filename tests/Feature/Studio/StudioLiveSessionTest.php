@@ -180,8 +180,12 @@ class StudioLiveSessionTest extends TestCase
                 && $session['instructions'] === 'Stüdyo brifingi: Türkçe tartış.'
                 // no voice picked → the configured default voice for this test
                 && $session['audio']['output']['voice'] === 'cedar'
-                // config default turn detection is semantic_vad, wired through
-                && $session['audio']['input']['turn_detection']['type'] === 'semantic_vad';
+                // config default turn detection is semantic_vad, wired through,
+                // with the most patient eagerness so the host is not cut off
+                && $session['audio']['input']['turn_detection']['type'] === 'semantic_vad'
+                && $session['audio']['input']['turn_detection']['eagerness'] === 'low'
+                && $session['audio']['input']['turn_detection']['create_response'] === true
+                && $session['audio']['input']['turn_detection']['interrupt_response'] === true;
         });
     }
 

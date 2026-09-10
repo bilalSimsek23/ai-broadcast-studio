@@ -44,12 +44,18 @@
         .tk-btn--go { background: #2563eb; border-color: #2563eb; color: #fff; }
         .tk-note { display: none; margin-top: 1rem; opacity: .72; font-size: 13px; }
         .tk-note.on { display: block; }
+        /* ?debug=1 only — never shown on air. */
+        #dbg { position: fixed; left: 10px; bottom: 8px; z-index: 20;
+            font: 12px/1.4 ui-monospace, Menlo, monospace; color: #7fa8d0;
+            background: rgba(4,7,12,.7); padding: 4px 8px; border-radius: 6px;
+            white-space: pre; pointer-events: none; }
     </style>
 </head>
 <body>
     <canvas id="orb" aria-hidden="true"></canvas>
     <img id="still" alt="" aria-hidden="true">
     <audio id="sink" autoplay playsinline></audio>
+    <div id="dbg" hidden></div>
 @unless ($displayMode)
     <div id="tk" aria-hidden="true">
         <div class="tk-box">
@@ -82,10 +88,18 @@
             // ?mode=display = ORB + images only, no mic / WebRTC (for vMix web
             // input). Default = the full audio engine.
             var displayMode = @js($displayMode);
+            // A browser that cannot capture a mic / do WebRTC (e.g. vMix's web
+            // input) can NEVER be the audio engine — fall back to display so it
+            // never claims ownership or shows a takeover prompt.
+            var canBeEngine = !!(window.RTCPeerConnection
+                && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+            var forcedDisplay = !displayMode && !canBeEngine;
+            if (forcedDisplay) displayMode = true;
             var isEngine = !displayMode;
             var myEngineId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
                 : ('eng-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
-            var owning = false, displayLevel = 0;
+            var owning = false, displayLevel = 0, displayAlive = false;
+            var debug = new URLSearchParams(location.search).get('debug') === '1';
             var $ = function (id) { return document.getElementById(id); };
             var dpr = window.devicePixelRatio || 1;
 
@@ -230,12 +244,18 @@
                     headers: authHeaders({ 'Accept': 'application/json' })
                 }).then(function (r) { return r.ok ? r.json() : null; })
                   .then(function (st) {
-                      if (st && st.alive) {
-                          displayLevel = (typeof st.level === 'number') ? st.level : 0;
-                      } else {
-                          displayLevel = 0;
+                      displayAlive = !!(st && st.alive);
+                      displayLevel = (displayAlive && typeof st.level === 'number') ? st.level : 0;
+                      if (debug) {
+                          var el = $('dbg'); el.hidden = false;
+                          el.textContent = 'display  alive=' + displayAlive
+                              + '  level=' + displayLevel.toFixed(3)
+                              + '  connected=' + (st ? !!st.connected : '?')
+                              + '  status=' + (st && st.status || '-');
                       }
-                  }).catch(function () {});
+                  }).catch(function () {
+                      if (debug) { var e = $('dbg'); e.hidden = false; e.textContent = 'display  state fetch FAILED'; }
+                  });
             }
 
             // --- audio engine ownership (single active engine) ----------------
@@ -316,6 +336,16 @@
                 n.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') dismiss(); });
             })();
             @endunless
+
+            if (debug) {
+                setInterval(function () {
+                    if (displayMode) return; // display readout is written in pollDisplayState
+                    var el = $('dbg'); el.hidden = false;
+                    el.textContent = 'engine  owning=' + owning + '  pc=' + !!pc
+                        + '  connecting=' + connecting + '  speaking=' + speaking.toFixed(3)
+                        + '  status=' + status + (forcedDisplay ? '  (forcedDisplay)' : '');
+                }, 500);
+            }
 
             // --- boot --------------------------------------------------------
             if (displayMode) {
@@ -547,7 +577,9 @@
 
                 var a = 0;
                 if (displayMode) {
-                    a = Math.max(0, Math.min(1, displayLevel));
+                    // Remote level is sampled only a few times a second and
+                    // tends to sit low; amplify so the motion reads on camera.
+                    a = Math.max(0, Math.min(1, displayLevel * 3));
                 } else if (analyser) {
                     analyser.getByteFrequencyData(freq);
                     var sum = 0;

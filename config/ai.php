@@ -203,14 +203,18 @@ return [
 
             // Turn-detection mode. `semantic_vad` lets the model decide when the
             // speaker is done (a more natural, human conversational feel);
-            // `eagerness` is how quickly it takes the floor. Revert to the
+            // `eagerness` is how quickly it takes the floor. OpenAI supports
+            // low | medium | high | auto (auto == medium). We default to `low`
+            // — the most patient setting — so the host's breaths, thinking
+            // pauses and mid-sentence silences are NOT taken as "the host is
+            // done"; the AI waits for a genuine end of turn. Revert to the
             // threshold-based detector with STUDIO_LIVE_VAD_TYPE=server_vad, in
             // which case the threshold / padding / silence values below apply (a
             // MILD raise of the defaults, not a hard gate). Barge-in stays on
             // (interrupt_response) either way.
             'turn_detection' => [
                 'type' => env('STUDIO_LIVE_VAD_TYPE', 'semantic_vad'),
-                'eagerness' => env('STUDIO_LIVE_VAD_EAGERNESS', 'auto'),
+                'eagerness' => env('STUDIO_LIVE_VAD_EAGERNESS', 'low'),
                 'threshold' => (float) env('STUDIO_LIVE_VAD_THRESHOLD', 0.6),
                 'prefix_padding_ms' => (int) env('STUDIO_LIVE_VAD_PREFIX_MS', 300),
                 'silence_duration_ms' => (int) env('STUDIO_LIVE_VAD_SILENCE_MS', 500),

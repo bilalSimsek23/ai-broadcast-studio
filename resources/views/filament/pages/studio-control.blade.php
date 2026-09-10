@@ -285,12 +285,21 @@
                     <span x-show="!broadcastAlive" x-cloak>Kapalı</span>
                 </div>
                 <p class="sc-help" x-show="!broadcastAlive" x-cloak>
-                    Yayın görüntüsünün çalışması için bu tarayıcıda Studio Live ekranını açın.
+                    Yayın ekranını bu tarayıcıda VEYA aşağıdaki adresle uzakta (vMix / OBS) açın.
+                </p>
+                <p class="sc-help" style="word-break: break-all;">
+                    Yayın ekranı adresi:
+                    <code>{{ $broadcastUrl }}</code>
+                    <button type="button" class="sc-linkbtn" x-on:click="copyBroadcastUrl()">kopyala</button>
+                    <span x-cloak x-show="urlCopied"> ✓</span>
+                    @unless ($broadcastTokenSet)
+                        <br><span class="sc-help--warn">STUDIO_LIVE_ACCESS_TOKEN ayarlı değil — uzak ekran yalnızca giriş yapmış adminde çalışır.</span>
+                    @endunless
                 </p>
             </div>
             <x-filament::button
                 tag="a"
-                href="/studio/live"
+                href="{{ $broadcastUrl }}"
                 target="_blank"
                 color="gray"
                 size="sm"
@@ -506,6 +515,7 @@
                 var CONTROL_WRITE = @js($controlWriteEndpoint);
                 var CONTROL_READ = @js($controlReadEndpoint);
                 var STATE_READ = @js($stateReadEndpoint);
+                var BROADCAST_URL = @js($broadcastUrl);
                 var CSRF = (document.querySelector('meta[name=csrf-token]') || {}).content || '';
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
@@ -518,7 +528,7 @@
                     inputMissing: false, outputMissing: false, permissionNeeded: false,
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
                     imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, imageQuality: DEFAULT_IMAGE_QUALITY,
-                    stagedImage: '', imageBusy: false, imageError: '', imageOnAir: false,
+                    stagedImage: '', imageBusy: false, imageError: '', imageOnAir: false, urlCopied: false,
                     _bc: null, _last: 0, _iv: null, _sv: null,
                     _control: { desired: 'idle', muted: false }, _imageTicket: null,
 
@@ -653,6 +663,18 @@
                                 this._last = Date.now();
                                 this.broadcastAlive = true;
                             }).catch(() => {});
+                    },
+
+                    copyBroadcastUrl: function () {
+                        var done = () => { this.urlCopied = true; setTimeout(() => { this.urlCopied = false; }, 2000); };
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(BROADCAST_URL).then(done).catch(function () {});
+                        } else {
+                            var t = document.createElement('textarea');
+                            t.value = BROADCAST_URL; document.body.appendChild(t); t.select();
+                            try { document.execCommand('copy'); done(); } catch (e) {}
+                            document.body.removeChild(t);
+                        }
                     },
 
                     _pushControl: function () {

@@ -113,6 +113,29 @@ class StudioControlPageTest extends TestCase
         $response->assertDontSee('sk-');
     }
 
+    public function test_the_broadcast_url_carries_the_access_token_when_one_is_configured(): void
+    {
+        config()->set('ai.realtime.public_access_token', 'SECRET-XYZ-123');
+        $this->actingAs(User::factory()->admin()->create());
+
+        $this->get('/admin/studio-control')
+            ->assertOk()
+            ->assertSee('studio/live?token=SECRET-XYZ-123')
+            ->assertSee('Yayın ekranı adresi')
+            ->assertDontSee('STUDIO_LIVE_ACCESS_TOKEN ayarlı değil');
+    }
+
+    public function test_without_a_configured_token_the_broadcast_url_stays_plain(): void
+    {
+        config()->set('ai.realtime.public_access_token', null);
+        $this->actingAs(User::factory()->admin()->create());
+
+        $this->get('/admin/studio-control')
+            ->assertOk()
+            ->assertDontSee('?token=')
+            ->assertSee('STUDIO_LIVE_ACCESS_TOKEN ayarlı değil');
+    }
+
     public function test_only_ready_episodes_are_offered_for_broadcast(): void
     {
         $this->actingAs(User::factory()->admin()->create());

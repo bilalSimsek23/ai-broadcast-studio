@@ -61,9 +61,15 @@ class StudioControl extends Page
         $voices = config('ai.realtime.voices');
         $default = config('ai.realtime.connections.openai.voice');
 
+        $token = config('ai.realtime.public_access_token');
+        $tokenSet = is_string($token) && $token !== '';
+        $broadcastUrl = url('/studio/live').($tokenSet ? '?token='.rawurlencode($token) : '');
+
         return [
             'voices' => is_array($voices) ? $voices : [],
             'defaultVoice' => is_string($default) && $default !== '' ? $default : 'marin',
+            'broadcastUrl' => $broadcastUrl,
+            'broadcastTokenSet' => $tokenSet,
             'episodes' => $this->readyEpisodes(),
             'durations' => $this->sessionDurations(),
             'defaultDuration' => $this->defaultDuration(),

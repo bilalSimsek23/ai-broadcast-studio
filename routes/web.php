@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\StudioImageController;
 use App\Http\Controllers\StudioLiveController;
+use App\Http\Controllers\StudioLiveRelayController;
 use App\Http\Middleware\EnsureStudioOperator;
+use App\Http\Middleware\StudioBroadcastAccess;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -10,34 +12,60 @@ Route::get('/', function () {
 });
 
 /*
- * Studio live realtime voice prototype (TASK-0007).
+ * Studio live realtime voice (TASK-0007 / TASK-0009).
  *
  * The broadcast OUTPUT screen (GET /studio/live) is PUBLIC so it can be opened
- * as a display / capture source (Remix, OBS, a spare monitor) without a login
- * prompt. It renders only the orb, holds NO credential, and does nothing on its
- * own — it acts only on commands from the operator console over a same-origin
- * BroadcastChannel. The credential-minting and image endpoints below stay
- * admin-gated and rate-limited.
+ * as a capture source (vMix web input, OBS, a spare monitor) without a login
+ * prompt. It renders only the orb and holds NO credential.
+ *
+ * The screen may run REMOTELY / in a separate browser, so it reaches its
+ * endpoints via `StudioBroadcastAccess` (an authenticated admin OR the shared
+ * `STUDIO_LIVE_ACCESS_TOKEN`). Endpoints that only the operator console uses
+ * stay `EnsureStudioOperator` (admin only). Commands + state flow through the
+ * cache-backed relay; audio never touches the server.
  */
 Route::get('studio/live', [StudioLiveController::class, 'show'])
     ->middleware('throttle:60,1')
     ->name('studio.live');
 
+// Reachable by the (possibly remote) broadcast screen — admin OR access token.
+Route::middleware(StudioBroadcastAccess::class)
+    ->prefix('studio/live')
+    ->name('studio.live.')
+    ->group(function (): void {
+        Route::post('session', [StudioLiveController::class, 'session'])
+            ->middleware('throttle:12,1')
+            ->name('session');
+        Route::get('control', [StudioLiveRelayController::class, 'readControl'])
+            ->middleware('throttle:240,1')
+            ->name('control.read');
+        Route::post('state', [StudioLiveRelayController::class, 'writeState'])
+            ->middleware('throttle:120,1')
+            ->name('state.write');
+    });
+
+// Operator console only — admin session required.
 Route::middleware(EnsureStudioOperator::class)
     ->prefix('studio')
     ->name('studio.')
     ->group(function (): void {
-        Route::post('live/session', [StudioLiveController::class, 'session'])
-            ->middleware('throttle:12,1')
-            ->name('live.session');
+        Route::post('live/control', [StudioLiveRelayController::class, 'writeControl'])
+            ->middleware('throttle:180,1')
+            ->name('live.control.write');
+        Route::get('live/state', [StudioLiveRelayController::class, 'readState'])
+            ->middleware('throttle:240,1')
+            ->name('live.state.read');
 
         // Operator-generated broadcast still image. `generate` dispatches a
-        // queued job and returns a ticket; the browser polls `status`.
+        // queued job and returns a ticket.
         Route::post('image', [StudioImageController::class, 'generate'])
             ->middleware('throttle:6,1')
             ->name('image');
-        Route::get('image/{ticket}', [StudioImageController::class, 'status'])
-            ->whereUuid('ticket')
-            ->middleware('throttle:120,1')
-            ->name('image.status');
     });
+
+// Image result fetch — the broadcast screen pulls the bytes once by ticket.
+Route::middleware(StudioBroadcastAccess::class)
+    ->get('studio/image/{ticket}', [StudioImageController::class, 'status'])
+    ->whereUuid('ticket')
+    ->middleware('throttle:120,1')
+    ->name('studio.image.status');

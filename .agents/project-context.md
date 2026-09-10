@@ -1,6 +1,6 @@
 # Project context — AI Broadcast Studio
 
-_Last updated: 2026-09-09 (TASK-0008 operator broadcast still image)_
+_Last updated: 2026-09-10 (TASK-0009 remote broadcast output / relay)_
 
 ## What it is
 
@@ -65,10 +65,13 @@ _Not modelled yet (later tasks):_
 
 - No public viewer accounts / viewer-facing web app.
 - No websocket/broadcasting (Reverb/Pusher) infrastructure and no server-side
-  audio relay. (TASK-0007's `/studio/live` uses browser WebRTC straight to
-  OpenAI with a backend-minted ephemeral key; the operator console and the
-  broadcast page sync over a browser `BroadcastChannel`. The reji browser
-  enumerates and applies physical audio devices — the server never does.)
+  audio relay. `/studio/live` uses browser WebRTC straight to OpenAI with a
+  backend-minted ephemeral key; the reji browser enumerates and applies
+  physical audio devices — the server never does. The operator console and the
+  broadcast page sync over a browser `BroadcastChannel` in the same browser,
+  and — for a REMOTE screen (vMix / OBS / another machine) — over a
+  **cache-backed command/state relay by short polling** (TASK-0009): commands
+  and state only, still no audio through the server, still no websockets.
 - No STT/TTS transcription; the realtime voice prototype plays audio only, no
   transcript. Broader voice (recorded TTS, STT pipelines) still untasked.
 - No persistence for broadcast images (TASK-0008): generation runs as a queued

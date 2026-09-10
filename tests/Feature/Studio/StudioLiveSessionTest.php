@@ -68,6 +68,21 @@ class StudioLiveSessionTest extends TestCase
         $this->postJson('/studio/live/session')->assertForbidden();
     }
 
+    public function test_a_remote_screen_may_mint_with_the_shared_access_token(): void
+    {
+        config()->set('ai.realtime.connections.openai.api_key', self::STANDING_KEY);
+        config()->set('ai.realtime.public_access_token', 'broadcast-token');
+
+        // No admin session — just the token, as vMix would send it.
+        $this->postJson('/studio/live/session', [], ['X-Studio-Token' => 'broadcast-token'])
+            ->assertOk()
+            ->assertJsonStructure(['client_secret', 'session_max_seconds']);
+
+        // A wrong / absent token is still refused.
+        $this->postJson('/studio/live/session', [], ['X-Studio-Token' => 'nope'])->assertUnauthorized();
+        $this->postJson('/studio/live/session')->assertUnauthorized();
+    }
+
     public function test_the_default_fake_driver_returns_a_usable_session_and_never_a_standing_key(): void
     {
         config()->set('ai.realtime.connections.openai.api_key', self::STANDING_KEY);

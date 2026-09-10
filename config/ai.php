@@ -157,6 +157,16 @@ return [
         // development / an explicit diagnostic.
         'allow_standalone_session' => (bool) env('STUDIO_LIVE_ALLOW_STANDALONE', false),
 
+        // Shared secret that lets the PUBLIC broadcast screen (/studio/live) —
+        // opened remotely / in a separate browser such as vMix's web input —
+        // reach the token-gated endpoints (session mint, control relay, state
+        // relay, image fetch) WITHOUT an admin login. Empty (default) = the
+        // feature is OFF and only an authenticated admin passes. The broadcast
+        // URL then carries it: /studio/live?token=<this>. Keep it long and
+        // random; if it leaks, someone can mint short-lived ephemeral OpenAI
+        // secrets (rate-limited) until it is rotated.
+        'public_access_token' => env('STUDIO_LIVE_ACCESS_TOKEN'),
+
         // The voices the director may pick from on the Studio Control page. The
         // request is validated against these KEYS server-side before it is sent
         // to the vendor. `marin` and `cedar` (the gpt-realtime GA pair) are the

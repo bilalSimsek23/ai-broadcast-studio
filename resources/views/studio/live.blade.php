@@ -39,16 +39,23 @@
             'use strict';
 
             var endpoint = "{{ $sessionEndpoint }}";
+            var controlEndpoint = "{{ $controlEndpoint }}";
+            var stateEndpoint = "{{ $stateEndpoint }}";
+            var imageStatusBase = "{{ $imageStatusBase }}";
             var csrf = document.querySelector('meta[name=csrf-token]').getAttribute('content');
+            // Access token from the URL (?token=…) — lets this screen run
+            // remotely / in vMix without an admin session. Empty when opened by
+            // a logged-in admin in the same browser.
+            var accessToken = new URLSearchParams(location.search).get('token') || '';
             var $ = function (id) { return document.getElementById(id); };
             var dpr = window.devicePixelRatio || 1;
 
             var pc = null, micStream = null, audioCtx = null, analyser = null;
-            var timerId = null, beatId = null, speaking = 0;
+            var timerId = null, speaking = 0, connecting = false;
             var muted = false, remainingSeconds = null, status = 'Hazır';
             var inputDeviceId = null, outputDeviceId = null, selectedVoice = null;
             var selectedEpisode = null, selectedPersona = null, selectedMaxSeconds = null;
-            var activeInputId = null;
+            var activeInputId = null, shownImageTicket = null;
             var outputSupported = ('setSinkId' in HTMLMediaElement.prototype);
             var deviceError = false, deviceLost = false;
             var freq = new Uint8Array(128);
@@ -56,16 +63,40 @@
             var bc = null;
             try { bc = new BroadcastChannel('studio-live'); } catch (e) { bc = null; }
 
-            function publish() {
-                if (!bc) return;
-                bc.postMessage({
-                    type: 'state',
+            function stateSnapshot() {
+                return {
                     connected: !!pc, muted: muted,
                     remainingSeconds: remainingSeconds, status: status,
                     inputActive: activeInputId, outputSupported: outputSupported,
-                    deviceError: deviceError, deviceLost: deviceLost
-                });
+                    deviceError: deviceError, deviceLost: deviceLost,
+                    imageVisible: $('still').classList.contains('on')
+                };
             }
+
+            function publish() {
+                // Same-browser fast path.
+                if (bc) {
+                    var m = stateSnapshot(); m.type = 'state';
+                    bc.postMessage(m);
+                }
+            }
+
+            // Server relay: post our state so a REMOTE console can read it.
+            function pushState() {
+                fetch(stateEndpoint, {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: authHeaders({ 'Content-Type': 'application/json', 'Accept': 'application/json' }),
+                    body: JSON.stringify(stateSnapshot())
+                }).catch(function () {});
+            }
+
+            function authHeaders(extra) {
+                var h = extra || {};
+                h['X-CSRF-TOKEN'] = csrf;
+                if (accessToken) h['X-Studio-Token'] = accessToken;
+                return h;
+            }
+
             function setStatus(t) { status = t; publish(); }
 
             if (bc) {
@@ -73,21 +104,13 @@
                     var d = e.data || {};
                     if (d.type === 'hello') { publish(); return; }
                     if (d.type === 'devices') {
-                        inputDeviceId = d.inputId || null;
-                        outputDeviceId = d.outputId || null;
-                        selectedVoice = d.voiceId || null;
-                        selectedEpisode = d.episodeUuid || null;
-                        selectedPersona = d.personaUuid || null;
-                        selectedMaxSeconds = (typeof d.durationSeconds === 'number') ? d.durationSeconds : null;
-                        applyOutputDevice();
+                        applyConfig(d.inputId, d.outputId, d.voiceId, d.episodeUuid, d.personaUuid, d.durationSeconds);
                         return;
                     }
                     if (d.type === 'image') {
-                        // Broadcast still image (show/hide only) — the bytes
-                        // arrive as a data: URI from the control page.
                         var still = $('still');
                         if (d.action === 'show' && d.src) { still.src = d.src; still.classList.add('on'); }
-                        else if (d.action === 'hide') { still.classList.remove('on'); }
+                        else if (d.action === 'hide') { still.classList.remove('on'); shownImageTicket = null; }
                         return;
                     }
                     if (d.type !== 'cmd') return;
@@ -98,9 +121,66 @@
                 };
             }
 
-            // Heartbeat: lets the control page know the broadcast screen is open.
-            beatId = setInterval(publish, 2000);
+            function applyConfig(inId, outId, voice, ep, per, dur) {
+                inputDeviceId = inId || null;
+                outputDeviceId = outId || null;
+                selectedVoice = voice || null;
+                selectedEpisode = ep || null;
+                selectedPersona = per || null;
+                selectedMaxSeconds = (typeof dur === 'number') ? dur : null;
+                applyOutputDevice();
+            }
+
+            // --- server command relay (for a REMOTE / separate-browser screen) --
+            function applyControl(doc) {
+                if (!doc || typeof doc !== 'object') return;
+
+                applyConfig(doc.inputId, doc.outputId, doc.voiceId, doc.episodeUuid, doc.personaUuid, doc.durationSeconds);
+
+                var img = doc.image || {};
+                if (img.visible && img.ticket && img.ticket !== shownImageTicket) {
+                    showImageByTicket(img.ticket);
+                } else if (!img.visible && $('still').classList.contains('on')) {
+                    $('still').classList.remove('on'); shownImageTicket = null;
+                }
+
+                if (doc.muted !== undefined && !!doc.muted !== muted) setMuted(!!doc.muted);
+
+                if (doc.desired === 'connected' && !pc && !connecting) {
+                    connect();
+                } else if (doc.desired === 'idle' && (pc || connecting)) {
+                    hangup('Görüşme bitti');
+                }
+            }
+
+            function showImageByTicket(ticket) {
+                fetch(imageStatusBase + encodeURIComponent(ticket), {
+                    credentials: 'same-origin',
+                    headers: authHeaders({ 'Accept': 'application/json' })
+                }).then(function (r) { return r.json(); }).then(function (s) {
+                    if (s && s.status === 'ready' && s.image) {
+                        $('still').src = s.image;
+                        $('still').classList.add('on');
+                        shownImageTicket = ticket;
+                    }
+                }).catch(function () {});
+            }
+
+            function pollControl() {
+                fetch(controlEndpoint, {
+                    credentials: 'same-origin',
+                    headers: authHeaders({ 'Accept': 'application/json' })
+                }).then(function (r) { return r.ok ? r.json() : null; })
+                  .then(function (doc) { applyControl(doc); })
+                  .catch(function () {});
+            }
+
+            // Heartbeat: BroadcastChannel (same browser) + server relay (remote).
+            setInterval(function () { publish(); pushState(); }, 2000);
+            setInterval(pollControl, 1000);
             publish();
+            pushState();
+            pollControl();
             if (bc) bc.postMessage({ type: 'hello' });
 
             // Autoplay unlock — one click anywhere on the broadcast screen.
@@ -143,7 +223,8 @@
             }
 
             async function connect() {
-                if (pc) return;
+                if (pc || connecting) return;
+                connecting = true;
                 deviceError = false; deviceLost = false;
                 setStatus('Bağlanıyor…');
 
@@ -151,11 +232,8 @@
                 try {
                     var r = await fetch(endpoint, {
                         method: 'POST',
-                        headers: {
-                            'X-CSRF-TOKEN': csrf,
-                            'Accept': 'application/json',
-                            'Content-Type': 'application/json'
-                        },
+                        credentials: 'same-origin',
+                        headers: authHeaders({ 'Accept': 'application/json', 'Content-Type': 'application/json' }),
                         // episode + persona are validated server-side
                         // (App\AI\Realtime\ResolveStudioEpisode); voice against
                         // the config allow-list. No silent fallback for a wrong
@@ -171,10 +249,11 @@
                         var err = null;
                         try { err = await r.json(); } catch (e2) {}
                         setStatus((err && err.message) ? err.message : 'Oturum başlatılamadı');
+                        connecting = false;
                         return;
                     }
                     s = await r.json();
-                } catch (e) { setStatus('Oturum başlatılamadı'); return; }
+                } catch (e) { setStatus('Oturum başlatılamadı'); connecting = false; return; }
 
                 try {
                     micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(s.audio_constraints) });
@@ -186,6 +265,7 @@
                     } else {
                         setStatus('Mikrofon izni yok');
                     }
+                    connecting = false;
                     return;
                 }
 
@@ -225,7 +305,8 @@
                 } catch (e) { hangup('Bağlantı kurulamadı'); return; }
 
                 await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-                publish();
+                connecting = false;
+                publish(); pushState();
                 // 0 / null from the backend = no session limit; otherwise the
                 // browser enforces it and auto-hangs up at zero.
                 if (Number(s.session_max_seconds) > 0) {
@@ -259,7 +340,7 @@
                 if (!isFinite(total) || total <= 0) { hangup('Yapılandırma hatası'); return; }
                 remainingSeconds = Math.round(total);
                 var tick = function () {
-                    publish();
+                    publish(); pushState();
                     if (remainingSeconds <= 0) { hangup('Süre doldu'); return; }
                     remainingSeconds -= 1;
                 };
@@ -271,6 +352,7 @@
             // AND by the operator end command: close the peer connection, stop
             // playback, release the microphone.
             function hangup(reason) {
+                connecting = false;
                 if (timerId) { clearInterval(timerId); timerId = null; }
                 if (pc) {
                     pc.oniceconnectionstatechange = null; pc.ontrack = null;
@@ -285,6 +367,7 @@
                 sink.srcObject = null;
                 muted = false; remainingSeconds = null; activeInputId = null;
                 setStatus(reason || 'Görüşme bitti');
+                pushState();
             }
 
             // --- orb --------------------------------------------------------

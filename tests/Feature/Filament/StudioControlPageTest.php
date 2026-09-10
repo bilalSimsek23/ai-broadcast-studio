@@ -80,9 +80,13 @@ class StudioControlPageTest extends TestCase
         $response->assertDontSee('rounded-xl border border-gray-200', escape: false);
         $response->assertDontSee('block w-full rounded-lg border-gray-300', escape: false);
 
-        // Same-origin BroadcastChannel bridge to /studio/live, browser-local
-        // device persistence — no server relay, no server-side device config.
+        // Same-browser BroadcastChannel bridge + a server command/state relay so
+        // a REMOTE /studio/live (vMix) follows too. Device ids stay browser-local.
         $response->assertSee("new BroadcastChannel('studio-live')", escape: false);
+        $response->assertSee('_pushControl', escape: false);
+        $response->assertSee('pollRemoteState', escape: false);
+        $response->assertSee('CONTROL_WRITE', escape: false);
+        $response->assertSee('studio\/live\/control', escape: false);
         $response->assertSee('enumerateDevices', escape: false);
         $response->assertSee('localStorage', escape: false);
 

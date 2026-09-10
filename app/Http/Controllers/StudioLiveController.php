@@ -30,8 +30,17 @@ final class StudioLiveController extends Controller
 {
     public function show(): View
     {
+        $ticketPlaceholder = '00000000-0000-0000-0000-000000000000';
+
         return view('studio.live', [
             'sessionEndpoint' => route('studio.live.session', [], absolute: false),
+            'controlEndpoint' => route('studio.live.control.read', [], absolute: false),
+            'stateEndpoint' => route('studio.live.state.write', [], absolute: false),
+            'imageStatusBase' => str_replace(
+                $ticketPlaceholder,
+                '',
+                route('studio.image.status', ['ticket' => $ticketPlaceholder], absolute: false),
+            ),
         ]);
     }
 

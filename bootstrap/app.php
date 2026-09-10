@@ -12,7 +12,15 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // The broadcast screen may run remotely / in a separate browser (vMix
+        // web input) with no session cookie, so it cannot carry a CSRF token.
+        // These endpoints are authorised by StudioBroadcastAccess (admin OR the
+        // shared access token) instead — the token-bearer model does not need
+        // CSRF. Every OTHER route keeps CSRF protection.
+        $middleware->validateCsrfTokens(except: [
+            'studio/live/session',
+            'studio/live/state',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

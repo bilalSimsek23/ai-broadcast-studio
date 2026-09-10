@@ -41,8 +41,12 @@ class StudioLivePageTest extends TestCase
         $response->assertDontSee('Yayın görünümü');
         $response->assertDontSee('Görüşmeyi bitir');
 
-        // Controlled over a same-origin BroadcastChannel — no server relay.
+        // Same-browser fast path (BroadcastChannel) AND a server command/state
+        // relay so the screen can run remotely / in vMix.
         $response->assertSee("new BroadcastChannel('studio-live')", escape: false);
+        $response->assertSee('pollControl', escape: false);
+        $response->assertSee('X-Studio-Token', escape: false);
+        $response->assertSee("URLSearchParams(location.search).get('token')", escape: false);
 
         // A broadcast still-image layer exists, shown/hidden from the control
         // page only (no controls on the output itself).

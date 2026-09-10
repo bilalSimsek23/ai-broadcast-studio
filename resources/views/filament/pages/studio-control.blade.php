@@ -503,6 +503,10 @@
                 var IMAGE_ENDPOINT = @js($imageEndpoint);
                 var DEFAULT_IMAGE_SIZE = @js($defaultImageSize);
                 var DEFAULT_IMAGE_QUALITY = @js($defaultImageQuality);
+                var CONTROL_WRITE = @js($controlWriteEndpoint);
+                var CONTROL_READ = @js($controlReadEndpoint);
+                var STATE_READ = @js($stateReadEndpoint);
+                var CSRF = (document.querySelector('meta[name=csrf-token]') || {}).content || '';
                 var lsGet = function (k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
                 var lsSet = function (k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {} };
 
@@ -515,7 +519,8 @@
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
                     imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, imageQuality: DEFAULT_IMAGE_QUALITY,
                     stagedImage: '', imageBusy: false, imageError: '', imageOnAir: false,
-                    _bc: null, _last: 0, _iv: null,
+                    _bc: null, _last: 0, _iv: null, _sv: null,
+                    _control: { desired: 'idle', muted: false }, _imageTicket: null,
 
                     get remainingLabel() {
                         if (this.remaining === null || this.remaining === undefined) {
@@ -567,6 +572,19 @@
                         var savedDur = parseInt(lsGet(DUR_KEY), 10);
                         this.durationSeconds = (DURATION_KEYS.indexOf(savedDur) !== -1) ? savedDur : DEFAULT_DURATION;
 
+                        // Adopt the server's current intent so reloading this
+                        // console does NOT reset a running (remote) broadcast.
+                        fetch(CONTROL_READ, { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': CSRF } })
+                            .then((r) => r.ok ? r.json() : null)
+                            .then((doc) => {
+                                if (doc && typeof doc === 'object') {
+                                    this._control.desired = (doc.desired === 'connected') ? 'connected' : 'idle';
+                                    this._control.muted = !!doc.muted;
+                                    if (doc.image && doc.image.ticket) this._imageTicket = doc.image.ticket;
+                                    this.imageOnAir = !!(doc.image && doc.image.visible);
+                                }
+                            }).catch(() => {});
+
                         try { this._bc = new BroadcastChannel('studio-live'); } catch (e) { this._bc = null; }
                         if (this._bc) {
                             this._bc.onmessage = (e) => {
@@ -605,11 +623,54 @@
                                 this.status = 'Yayın ekranı kapalı';
                             }
                         }, 1000);
+
+                        // Server relay: pick up a REMOTE broadcast screen's state.
+                        this._sv = setInterval(() => this.pollRemoteState(), 1500);
+                        this.pollRemoteState();
                     },
 
                     destroy: function () {
                         if (this._iv) clearInterval(this._iv);
+                        if (this._sv) clearInterval(this._sv);
                         if (this._bc) this._bc.close();
+                    },
+
+                    pollRemoteState: function () {
+                        fetch(STATE_READ, { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': CSRF } })
+                            .then((r) => r.ok ? r.json() : null)
+                            .then((st) => {
+                                if (!st || !st.alive) return;
+                                // Same-browser BroadcastChannel wins when it is live.
+                                if (Date.now() - this._last < 4000) return;
+                                this.connected = !!st.connected;
+                                this.muted = !!st.muted;
+                                this.status = st.status || '';
+                                this.remaining = (st.remainingSeconds === undefined || st.remainingSeconds === null) ? null : st.remainingSeconds;
+                                this.outputSupported = (st.outputSupported === undefined ? null : !!st.outputSupported);
+                                this.inputActive = st.inputActive || null;
+                                this.deviceError = !!st.deviceError;
+                                this.deviceLost = !!st.deviceLost;
+                                this._last = Date.now();
+                                this.broadcastAlive = true;
+                            }).catch(() => {});
+                    },
+
+                    _pushControl: function () {
+                        fetch(CONTROL_WRITE, {
+                            method: 'POST', credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': CSRF },
+                            body: JSON.stringify({
+                                desired: this._control.desired,
+                                muted: this._control.muted,
+                                voiceId: this.voiceId || null,
+                                inputId: this.inputId || null,
+                                outputId: this.outputId || null,
+                                episodeUuid: this.episodeUuid || null,
+                                personaUuid: this.personaUuid || null,
+                                durationSeconds: this.durationSeconds,
+                                image: { visible: !!this.imageOnAir, ticket: this._imageTicket || null }
+                            })
+                        }).catch(() => {});
                     },
 
                     _disambiguate: function (raw) {
@@ -752,7 +813,8 @@
                             if (!s) continue;
                             if (s.status === 'ready' && s.image) {
                                 this.stagedImage = s.image;
-                                if (this.imageOnAir) this._pushImage();
+                                this._imageTicket = ticket;
+                                if (this.imageOnAir) { this._pushImage(); this._pushControl(); }
                                 this.imageBusy = false;
                                 return;
                             }
@@ -780,10 +842,12 @@
                         if (!this.stagedImage) return;
                         this.imageOnAir = true;
                         this._pushImage();
+                        this._pushControl();
                     },
                     clearImageFromAir: function () {
                         this.imageOnAir = false;
                         if (this._bc) this._bc.postMessage({ type: 'image', action: 'hide' });
+                        this._pushControl();
                     },
 
                     sendDevices: function () {
@@ -796,9 +860,17 @@
                             personaUuid: this.personaUuid || null,
                             durationSeconds: this.durationSeconds
                         });
+                        this._pushControl();
                     },
+                    // Same-browser fast path (BroadcastChannel) + server relay
+                    // (level-based intent) so a REMOTE screen follows too.
                     send: function (cmd) {
+                        if (cmd === 'connect') this._control.desired = 'connected';
+                        else if (cmd === 'hangup') this._control.desired = 'idle';
+                        else if (cmd === 'mute') this._control.muted = true;
+                        else if (cmd === 'unmute') this._control.muted = false;
                         if (this._bc) this._bc.postMessage({ type: 'cmd', cmd: cmd });
+                        this._pushControl();
                     },
                 };
             });

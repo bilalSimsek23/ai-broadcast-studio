@@ -1,6 +1,6 @@
 # Architecture — AI Broadcast Studio
 
-_Last updated: 2026-09-09 (TASK-0008 operator broadcast still image; §2g).
+_Last updated: 2026-09-10 (TASK-0009 remote broadcast output / relay; §2h).
 Section 2 and its module split are the **target** shape; §§2a–2f record what is
 actually built._
 
@@ -465,8 +465,9 @@ is a capture source (Remix / OBS / spare monitor) and must open without a login
 prompt; it carries no secret and does nothing without operator commands.
 `POST /studio/live/session` (body `{voice?, episode?, persona?, max_seconds?}`;
 `throttle:12,1`; `ResolveStudioEpisode` → `422 {error, message}` on any invalid
-selection; `ProviderException` → `report()` + generic `503`) stays **admin-gated**
-(it mints paid credentials), as do the image endpoints. The Filament
+selection; `ProviderException` → `report()` + generic `503`) is
+**`StudioBroadcastAccess`** (admin OR the shared token — the remote screen mints
+its own session; see §2h). `POST /studio/image` stays admin-only. The Filament
 `App\Filament\Pages\StudioControl` (`/admin/studio-control`) is auto-discovered
 and panel-gated + `canAccess()`; its `getViewData()` lists Ready episodes with
 their line-ups.
@@ -608,6 +609,49 @@ and slow). All keys `env()`-overridable, documented in `.env.example`.
 **Not built:** persistence / history / audit of generated images; the realtime
 AI proposing an image itself (tool call); video or lower-third graphics;
 server-side image storage or a relay.
+
+## 2h. Remote broadcast output — as built (TASK-0009)
+
+`/studio/live` must work when opened **remotely / in a separate browser** (vMix
+web input, OBS, another machine), where the operator console's same-origin
+`BroadcastChannel` cannot reach it. A cache-backed **command + state relay**
+bridges them. It carries COMMANDS + STATE only — the WebRTC audio still runs
+browser ↔ OpenAI directly, so "no server-side audio relay" (CLAUDE.md §2.9)
+holds; it is short-polling, not websockets, so "no premature realtime infra"
+(§2.9) holds too.
+
+```
+console (admin)                         cache                       screen (admin OR ?token=)
+  every action ─POST /studio/live/control─► control doc ◄─GET /studio/live/control (1s)─ reconcile
+     {desired, muted, devices, image:{visible,ticket}, rev}          desired→connect/hangup, image by ticket
+  GET /studio/live/state (1.5s) ◄──────── state doc  ◄─POST /studio/live/state (2s)──── {connected,muted,remaining,…}
+```
+
+- `app/AI/Realtime/StudioLiveRelay` — one **level-based** control doc + one
+  state doc (single studio, no per-session ids). Level-based (`desired:
+  connected|idle`, not events) so a missed poll self-heals. State carries
+  `alive` (freshness ≤ 6 s). Backed by the cache (database / redis in prod).
+- `app/Http/Middleware/StudioBroadcastAccess` — passes for an authenticated
+  admin OR a request whose `X-Studio-Token` / `?token=` equals
+  `config('ai.realtime.public_access_token')` (`STUDIO_LIVE_ACCESS_TOKEN`,
+  `hash_equals`). Empty config ⇒ token path OFF (admin only) — feature off by
+  default. Non-admin user → 403, guest → 401.
+- Routes: `GET /studio/live/control`, `POST /studio/live/state`,
+  `POST /studio/live/session`, `GET /studio/image/{ticket}` → `StudioBroadcastAccess`;
+  `POST /studio/live/control`, `GET /studio/live/state`, `POST /studio/image` →
+  `EnsureStudioOperator` (admin only). `bootstrap/app.php` excludes CSRF for
+  `studio/live/session` + `studio/live/state` (token-bearer, no cookie).
+- Broadcast blade: reads `?token=`; `pollControl()` reconciles; `pushState()`
+  posts state; `connecting` guard. It still prefers `BroadcastChannel` when the
+  console is in the same browser.
+- Console blade: `_pushControl()` on every action; **adopts** the server's
+  current `desired` on load so a console reload never resets a running
+  broadcast; `pollRemoteState()` drives the readouts when no BroadcastChannel
+  heartbeat is heard.
+- Needs the same running queue / shared cache backend as image generation.
+- **Risk (operator-accepted):** a leaked `?token=` URL lets someone mint
+  short-lived ephemeral OpenAI secrets (rate-limited) until the token is
+  rotated.
 
 ## 3. Key boundaries
 

@@ -1,11 +1,73 @@
-<!-- task-id: TASK-0008 -->
+<!-- task-id: TASK-0009 -->
 # Current task
 
 > Completed: bootstrap · TASK-0001 core domain · TASK-0002 static analysis ·
 > TASK-0003 Filament core administration · TASK-0004 episode preparation
 > workspace · TASK-0005 AI text provider foundation · TASK-0006 OpenAI adapter
 > + Episode text rehearsal · TASK-0007 studio live realtime voice prototype ·
-> TASK-0008 operator broadcast still image.
+> TASK-0008 operator broadcast still image · TASK-0009 remote broadcast output
+> (server command/state relay).
+
+## TASK-0009 — REMOTE BROADCAST OUTPUT (server command/state relay)
+
+**Status:** COMPLETE — Pint, `php artisan test` (330), PHPStan level 6 (0) green;
+inline blade scripts parse-clean. Real vMix / cross-machine acceptance is
+MANUAL and NOT run here.
+
+**Goal:** `/studio/live` must work when opened **remotely / in a separate
+browser** (vMix web input, OBS, another machine) where a same-origin
+`BroadcastChannel` from the operator console cannot reach it.
+
+**Design:** a cache-backed **command + state relay** — NOT an audio relay (the
+WebRTC media still runs browser ↔ OpenAI directly). `BroadcastChannel` is kept
+as the zero-latency same-browser fast path; the relay runs in parallel and is
+the only path for a remote screen.
+
+- `app/AI/Realtime/StudioLiveRelay` — one control doc + one state doc in the
+  cache (single studio, no per-session ids). Control is **level-based**
+  (`desired: connected|idle`, `muted`, device/voice/episode/persona/duration,
+  `image:{visible,ticket}`, `rev`, `updatedAt`) so a missed poll self-heals;
+  state carries `alive` (freshness ≤ 6 s).
+- `app/Http/Controllers/StudioLiveRelayController` + routes:
+  `GET /studio/live/control` + `POST /studio/live/state` → `StudioBroadcastAccess`
+  (admin OR token); `POST /studio/live/control` + `GET /studio/live/state` →
+  `EnsureStudioOperator` (admin only). `POST /studio/live/session` and
+  `GET /studio/image/{ticket}` moved to `StudioBroadcastAccess`; `POST /studio/image`
+  stays admin-only.
+- `app/Http/Middleware/StudioBroadcastAccess` — passes for an admin OR a request
+  carrying `X-Studio-Token` / `?token=` equal to
+  `config('ai.realtime.public_access_token')` (`STUDIO_LIVE_ACCESS_TOKEN`,
+  `hash_equals`); empty config ⇒ token path OFF (admin only). Non-admin user →
+  403, guest → 401.
+- `bootstrap/app.php` — CSRF excluded for `studio/live/session` + `studio/live/state`
+  (token-bearer, no cookie); every other route keeps CSRF.
+- `resources/views/studio/live.blade.php` — reads `?token=`; `pollControl()` (1 s)
+  reconciles the control doc (`desired` → connect/hangup, `muted`, image by
+  ticket via `GET /studio/image/{ticket}`); `pushState()` (2 s, + per-second
+  while counting down) posts its state; `connecting` guard prevents re-entry.
+- `resources/views/filament/pages/studio-control.blade.php` — `_pushControl()`
+  writes the intent doc on every action (`send`/`sendDevices`/image); on load it
+  **adopts** the server's current `desired` so a console reload does not reset a
+  running broadcast; `pollRemoteState()` (1.5 s) drives the readouts when no
+  BroadcastChannel heartbeat is heard.
+- `config('ai.realtime.public_access_token')` + `.env.example` doc. **Needs the
+  same running queue/cache backend as image generation.**
+
+**Risk (operator-accepted):** if the `?token=` URL leaks, someone can mint
+short-lived ephemeral OpenAI secrets (rate-limited 12/min) until the token is
+rotated.
+
+### Tests
+- `tests/Feature/Studio/StudioBroadcastAccessTest.php` — admin passes; matching
+  token via header/query passes; wrong/absent token 401; non-admin 403; empty
+  config token ⇒ token path disabled.
+- `tests/Feature/Studio/StudioLiveRelayTest.php` — console writes intent, screen
+  reads it with only the token; `rev` increments; control write is admin-only;
+  bad `desired` 422; screen posts state, console reads it (`alive:true`);
+  state read admin-only; missing state ⇒ `alive:false`.
+- `StudioLiveSessionTest` — a remote screen mints with the shared token; wrong /
+  absent token still refused.
+- `StudioLivePageTest` / `StudioControlPageTest` — relay wiring present in the JS.
 
 ## TASK-0008 — OPERATOR BROADCAST STILL IMAGE
 
@@ -515,9 +577,10 @@ into a short-lived ephemeral secret server-side, never sent to the browser.
 
 ### Next task (draft, not started)
 
-**TASK-0009** — not started. Do not begin without a written task here.
+**TASK-0010** — not started. Do not begin without a written task here.
 Likely follow-ups: a persisted transcript / event log for a live session;
 per-session spend caps; the human-host model/field (deferred product decision);
 a persona `voice_id` → realtime-voice resolver; image history / re-use / audit
-(TASK-0008 deliberately persists nothing); letting the realtime AI itself
-propose a broadcast image via a tool call.
+(persists nothing today); letting the realtime AI itself propose a broadcast
+image via a tool call; moving the relay off short-polling onto SSE/websockets
+if latency ever matters.

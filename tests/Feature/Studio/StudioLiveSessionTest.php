@@ -233,7 +233,7 @@ class StudioLiveSessionTest extends TestCase
     {
         $this->actingAsAdmin();
 
-        for ($i = 0; $i < 12; $i++) {
+        for ($i = 0; $i < 30; $i++) {
             $this->postJson('/studio/live/session')->assertOk();
         }
 

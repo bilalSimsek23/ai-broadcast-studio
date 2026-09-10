@@ -25,7 +25,7 @@ Route::get('/', function () {
  * cache-backed relay; audio never touches the server.
  */
 Route::get('studio/live', [StudioLiveController::class, 'show'])
-    ->middleware('throttle:60,1')
+    ->middleware('throttle:300,1')
     ->name('studio.live');
 
 // Reachable by the (possibly remote) broadcast screen — admin OR access token.
@@ -34,13 +34,15 @@ Route::middleware(StudioBroadcastAccess::class)
     ->name('studio.live.')
     ->group(function (): void {
         Route::post('session', [StudioLiveController::class, 'session'])
-            ->middleware('throttle:12,1')
+            ->middleware('throttle:30,1')
             ->name('session');
+        // Poll endpoints — tiny cache reads/writes; several screens may poll at
+        // once. Generous ceilings that still stop abuse.
         Route::get('control', [StudioLiveRelayController::class, 'readControl'])
-            ->middleware('throttle:240,1')
+            ->middleware('throttle:600,1')
             ->name('control.read');
         Route::post('state', [StudioLiveRelayController::class, 'writeState'])
-            ->middleware('throttle:120,1')
+            ->middleware('throttle:600,1')
             ->name('state.write');
     });
 
@@ -50,10 +52,10 @@ Route::middleware(EnsureStudioOperator::class)
     ->name('studio.')
     ->group(function (): void {
         Route::post('live/control', [StudioLiveRelayController::class, 'writeControl'])
-            ->middleware('throttle:180,1')
+            ->middleware('throttle:600,1')
             ->name('live.control.write');
         Route::get('live/state', [StudioLiveRelayController::class, 'readState'])
-            ->middleware('throttle:240,1')
+            ->middleware('throttle:600,1')
             ->name('live.state.read');
 
         // Operator-generated broadcast still image. `generate` dispatches a

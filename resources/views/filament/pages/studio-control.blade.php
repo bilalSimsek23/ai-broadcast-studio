@@ -445,7 +445,7 @@
                         size="lg"
                         color="success"
                         icon="heroicon-o-play"
-                        x-show="!connected"
+                        x-show="!connected && !pendingConnect"
                         x-on:click="send('connect')"
                         x-bind:disabled="!broadcastAlive || !inputId || inputMissing || !selectedEpisode || !personaUuid"
                     >
@@ -476,12 +476,15 @@
                         color="danger"
                         icon="heroicon-o-stop"
                         x-cloak
-                        x-show="connected"
+                        x-show="connected || pendingConnect"
                         x-on:click="send('hangup')"
                     >
                         GÖRÜŞMEYİ BİTİR
                     </x-filament::button>
                 </div>
+                <p class="sc-help sc-help--warn" x-cloak x-show="pendingConnect">
+                    Bağlanma isteği gönderildi ama yayın ekranı henüz bağlanmadı. Ekranın açık ve mikrofon izninin verili olduğundan emin olun; sıfırlamak için "Görüşmeyi Bitir".
+                </p>
             </x-filament::section>
         </div>
 
@@ -529,7 +532,7 @@
                     outputSupported: null, inputActive: null, deviceError: false, deviceLost: false,
                     imagePrompt: '', imageSize: DEFAULT_IMAGE_SIZE, imageQuality: DEFAULT_IMAGE_QUALITY,
                     stagedImage: '', imageBusy: false, imageError: '', imageOnAir: false, urlCopied: false,
-                    _bc: null, _last: 0, _iv: null, _sv: null,
+                    _bc: null, _last: 0, _iv: null, _sv: null, _pcT: null, _dcT: null,
                     _control: { desired: 'idle', muted: false }, _imageTicket: null,
 
                     get remainingLabel() {
@@ -541,6 +544,9 @@
                     },
                     get durationLabel() {
                         return DURATION_LABELS[this.durationSeconds] || (Math.round(this.durationSeconds / 60) + ' dk');
+                    },
+                    get pendingConnect() {
+                        return this._control.desired === 'connected' && !this.connected;
                     },
                     get selectedEpisode() {
                         var uuid = this.episodeUuid;
@@ -583,17 +589,27 @@
                         this.durationSeconds = (DURATION_KEYS.indexOf(savedDur) !== -1) ? savedDur : DEFAULT_DURATION;
 
                         // Adopt the server's current intent so reloading this
-                        // console does NOT reset a running (remote) broadcast.
+                        // console does NOT reset a running (remote) broadcast —
+                        // but only keep a "connected" intent if a broadcast is
+                        // actually live; otherwise it is a stale doc, start idle.
                         fetch(CONTROL_READ, { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': CSRF } })
                             .then((r) => r.ok ? r.json() : null)
                             .then((doc) => {
-                                if (doc && typeof doc === 'object') {
-                                    this._control.desired = (doc.desired === 'connected') ? 'connected' : 'idle';
-                                    this._control.muted = !!doc.muted;
-                                    if (doc.image && doc.image.ticket) this._imageTicket = doc.image.ticket;
-                                    this.imageOnAir = !!(doc.image && doc.image.visible);
-                                }
-                            }).catch(() => {});
+                                if (!doc || typeof doc !== 'object') return;
+                                this._control.muted = !!doc.muted;
+                                if (doc.image && doc.image.ticket) this._imageTicket = doc.image.ticket;
+                                this.imageOnAir = !!(doc.image && doc.image.visible);
+                                if (doc.desired !== 'connected') { this._control.desired = 'idle'; return; }
+                                return fetch(STATE_READ, { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': CSRF } })
+                                    .then((r) => r.ok ? r.json() : null)
+                                    .then((st) => { this._control.desired = (st && st.alive && st.connected) ? 'connected' : 'idle'; });
+                            })
+                            .then(() => {
+                                // Write the (possibly corrected) intent back so a
+                                // stale "connected" doc from a past session clears.
+                                if (this._control.desired === 'idle') this._doPushControl();
+                            })
+                            .catch(() => { this._control.desired = 'idle'; });
 
                         try { this._bc = new BroadcastChannel('studio-live'); } catch (e) { this._bc = null; }
                         if (this._bc) {
@@ -622,7 +638,12 @@
                         this.refreshDevices();
 
                         if (navigator.mediaDevices && 'ondevicechange' in navigator.mediaDevices) {
-                            navigator.mediaDevices.addEventListener('devicechange', () => this.refreshDevices());
+                            // Some pro-audio drivers fire devicechange in bursts —
+                            // debounce so we don't re-enumerate + re-push in a loop.
+                            navigator.mediaDevices.addEventListener('devicechange', () => {
+                                clearTimeout(this._dcT);
+                                this._dcT = setTimeout(() => this.refreshDevices(), 800);
+                            });
                         }
 
                         this._iv = setInterval(() => {
@@ -642,6 +663,8 @@
                     destroy: function () {
                         if (this._iv) clearInterval(this._iv);
                         if (this._sv) clearInterval(this._sv);
+                        clearTimeout(this._pcT);
+                        clearTimeout(this._dcT);
                         if (this._bc) this._bc.close();
                     },
 
@@ -677,7 +700,13 @@
                         }
                     },
 
+                    // Debounced so a burst of changes (a devicechange storm, a
+                    // few quick selects) collapses into one relay write.
                     _pushControl: function () {
+                        clearTimeout(this._pcT);
+                        this._pcT = setTimeout(() => this._doPushControl(), 400);
+                    },
+                    _doPushControl: function () {
                         fetch(CONTROL_WRITE, {
                             method: 'POST', credentials: 'same-origin',
                             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': CSRF },

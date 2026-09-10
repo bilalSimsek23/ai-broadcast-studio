@@ -51,7 +51,7 @@
             var dpr = window.devicePixelRatio || 1;
 
             var pc = null, micStream = null, audioCtx = null, analyser = null;
-            var timerId = null, speaking = 0, connecting = false;
+            var timerId = null, speaking = 0, connecting = false, lastConnectAt = 0;
             var muted = false, remainingSeconds = null, status = 'Hazır';
             var inputDeviceId = null, outputDeviceId = null, selectedVoice = null;
             var selectedEpisode = null, selectedPersona = null, selectedMaxSeconds = null;
@@ -147,7 +147,9 @@
                 if (doc.muted !== undefined && !!doc.muted !== muted) setMuted(!!doc.muted);
 
                 if (doc.desired === 'connected' && !pc && !connecting) {
-                    connect();
+                    // Cooldown so a failing connect() (no mic permission, bad
+                    // episode…) can't hammer /studio/live/session once a second.
+                    if (Date.now() - lastConnectAt > 10000) { lastConnectAt = Date.now(); connect(); }
                 } else if (doc.desired === 'idle' && (pc || connecting)) {
                     hangup('Görüşme bitti');
                 }
@@ -177,7 +179,7 @@
 
             // Heartbeat: BroadcastChannel (same browser) + server relay (remote).
             setInterval(function () { publish(); pushState(); }, 2000);
-            setInterval(pollControl, 1000);
+            setInterval(pollControl, 2000);
             publish();
             pushState();
             pollControl();
